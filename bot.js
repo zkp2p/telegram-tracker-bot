@@ -456,6 +456,53 @@ async setUserThreshold(chatId, threshold) {
   
 }
 
+async function postToDiscord({
+  webhookUrl,
+  content,
+  components = null,
+  threadId = null,
+  username = 'ZKP2P Alerts',
+  avatar_url = undefined
+}) {
+  if (!webhookUrl) return; // silently skip if not configured
+
+  const url = threadId ? `${webhookUrl}?thread_id=${threadId}` : webhookUrl;
+
+  const body = { content, username, avatar_url };
+  if (components) body.components = components;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  // Simple rate-limit handling
+  if (res.status === 429) {
+    const j = await res.json().catch(() => ({}));
+    const retryMs = Math.ceil((j.retry_after || 1) * 1000);
+    await new Promise(r => setTimeout(r, retryMs));
+    return postToDiscord({ webhookUrl, content, components, threadId, username, avatar_url });
+  }
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    console.error('Discord webhook error:', res.status, txt);
+  }
+}
+
+function linkButton(label, url) {
+  return [
+    {
+      type: 1, // ActionRow
+      components: [
+        { type: 2, style: 5, label, url } // ButtonStyle.Link
+      ]
+    }
+  ];
+}
+
+
 
 const db = new DatabaseManager();
 
@@ -1013,6 +1060,14 @@ async function sendFulfilledNotification(rawIntent, txHash) {
 - *Tx:* [View on BaseScan](${txLink(txHash)})
 `.trim();
 
+  await postToDiscord({
+    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+    content: message,
+    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+  });
+
+
   for (const chatId of interestedUsers) {
     await db.updateDepositStatus(chatId, depositId, 'fulfilled', intentHash);
     await db.logEventNotification(chatId, depositId, 'fulfilled');
@@ -1045,6 +1100,14 @@ async function sendPrunedNotification(rawIntent, txHash) {
 
 *Order was cancelled*
 `.trim();
+
+  await postToDiscord({
+    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+    content: message,
+    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+  });
+
 
   for (const chatId of interestedUsers) {
     await db.updateDepositStatus(chatId, depositId, 'pruned', intentHash);
@@ -1223,6 +1286,15 @@ const sendOptions = {
 if (chatId === ZKP2P_GROUP_ID) {
   sendOptions.message_thread_id = ZKP2P_SNIPER_TOPIC_ID;
 }
+
+// Mirror to Discord sniper webhook (once per alert path)
+await postToDiscord({
+  webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
+  threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
+  content: message,
+  components: linkButton(`🔗 Snipe Deposit ${depositId}`, depositLink(depositId))
+});
+
 
 bot.sendMessage(chatId, message, sendOptions);
     } else {
@@ -1650,6 +1722,14 @@ const handleContractEvent = async (log) => {
 • *Block:* ${log.blockNumber}
 • *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
 `.trim();
+
+      await postToDiscord({
+        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+        content: message,
+        components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
+      });
+
 
       for (const chatId of interestedUsers) {
         await db.updateDepositStatus(chatId, id, 'signaled', intentHash);
