@@ -502,6 +502,12 @@ function linkButton(label, url) {
   ];
 }
 
+function toDiscordMarkdown(msg) {
+  // Turn *bold* (Telegram) into **bold** (Discord)
+  // Non-greedy so it won't over-capture
+  return msg.replace(/\*(.*?)\*/g, '**$1**');
+}
+
 
 
 const db = new DatabaseManager();
@@ -1063,7 +1069,7 @@ async function sendFulfilledNotification(rawIntent, txHash) {
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: message,
+    content: toDiscordMarkdown(message),
     components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
   });
 
@@ -1104,7 +1110,7 @@ async function sendPrunedNotification(rawIntent, txHash) {
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: message,
+    content: toDiscordMarkdown(message),
     components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
   });
 
@@ -1291,7 +1297,7 @@ if (chatId === ZKP2P_GROUP_ID) {
 await postToDiscord({
   webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
   threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
-  content: message,
+  content: toDiscordMarkdown(message),
   components: linkButton(`🔗 Snipe Deposit ${depositId}`, depositLink(depositId))
 });
 
@@ -1726,7 +1732,7 @@ const handleContractEvent = async (log) => {
       await postToDiscord({
         webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
         threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: message,
+        content: toDiscordMarkdown(message),
         components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
       });
 
