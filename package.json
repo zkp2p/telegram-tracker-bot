@@ -1,10 +1,11 @@
 {
   "name": "base-telegram-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "bot.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node bot.js",
+    "dev": "node bot.js"
   },
   "keywords": [],
   "author": "",
