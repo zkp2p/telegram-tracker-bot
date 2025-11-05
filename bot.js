@@ -1028,7 +1028,7 @@ function scheduleTransactionProcessing(txHash) {
   setTimeout(async () => {
     await processCompletedTransaction(txHash);
     processingScheduled.delete(txHash);
-  }, 3000); // Wait 3 seconds for all events to arrive
+  }, 10000); // Wait 10 seconds for all events to arrive
 }
 
 async function processCompletedTransaction(txHash) {
@@ -1047,7 +1047,11 @@ async function processCompletedTransaction(txHash) {
     // Send pruned notification
     const rawIntent = txData.rawIntents.get(intentHash);
     if (rawIntent) {
-      await sendPrunedNotification(rawIntent, txHash);
+      if (rawIntent.eventType === 'orchestrator') {
+        await sendOrchestratorPrunedNotification(rawIntent, txHash);
+      } else {
+        await sendPrunedNotification(rawIntent, txHash);
+      }
     }
   }
   
@@ -1055,7 +1059,11 @@ async function processCompletedTransaction(txHash) {
   for (const intentHash of txData.fulfilled) {
     const rawIntent = txData.rawIntents.get(intentHash);
     if (rawIntent) {
-      await sendFulfilledNotification(rawIntent, txHash);
+      if (rawIntent.eventType === 'orchestrator') {
+        await sendOrchestratorFulfilledNotification(rawIntent, txHash);
+      } else {
+        await sendFulfilledNotification(rawIntent, txHash);
+      }
     }
   }
   
@@ -1159,6 +1167,132 @@ async function sendPrunedNotification(rawIntent, txHash) {
     }
     bot.sendMessage(chatId, message, sendOptions);
   }
+}
+
+async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
+  const { intentHash, fundsTransferredTo, amount, isManualRelease } = rawIntent;
+  const intentHashLower = intentHash.toLowerCase();
+  
+  // Get stored intent details
+  const storedDetails = orchestratorIntentDetails.get(intentHashLower);
+  if (!storedDetails) {
+    console.log('⚠️ No stored details for intent:', intentHash);
+    return;
+  }
+  
+  // Also try intentDetails for backward compatibility
+  const oldIntentDetails = intentDetails.get(intentHashLower);
+  const verifier = storedDetails.escrow || oldIntentDetails?.verifier || 'Unknown';
+  
+  const depositId = storedDetails.depositId;
+  const { owner, fiatCurrency, conversionRate, paymentMethod } = storedDetails;
+  
+  // Try to get platform name from payment method first (Orchestrator v2/v3), fallback to verifier address
+  const platformName = paymentMethod ? getPlatformName(paymentMethod) : getPlatformName(verifier);
+  
+  let rateText = '';
+  if (oldIntentDetails || storedDetails.fiatCurrency) {
+    const fiatCode = getFiatCode(storedDetails.fiatCurrency);
+    const formattedRate = formatConversionRate(storedDetails.conversionRate || 0n, fiatCode);
+    rateText = `\n- *Rate:* ${formattedRate}`;
+  }
+  
+  const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
+  if (interestedUsers.length === 0) return;
+  
+  console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
+  
+  const message = `
+🟢 *Order Fulfilled*
+- *Deposit ID:* \`${depositId}\`
+- *Order ID:* \`${intentHash}\`
+- *Platform:* ${platformName}
+- *Owner:* \`${owner}\`
+- *To:* \`${fundsTransferredTo}\`
+- *Amount:* ${formatUSDC(amount)} USDC${rateText}
+- *Manual Release:* ${isManualRelease ? 'Yes' : 'No'}
+- *Tx:* [View on BaseScan](${txLink(txHash)})
+`.trim();
+
+  await postToDiscord({
+    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+    content: toDiscordMarkdown(message),
+    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+  });
+
+  for (const chatId of interestedUsers) {
+    await db.updateDepositStatus(chatId, depositId, 'fulfilled', intentHash);
+    await db.logEventNotification(chatId, depositId, 'fulfilled');
+    
+    const sendOptions = { 
+      parse_mode: 'Markdown', 
+      disable_web_page_preview: true,
+      reply_markup: createDepositKeyboard(depositId)
+    };
+    if (chatId === ZKP2P_GROUP_ID) {
+      sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
+    }
+    bot.sendMessage(chatId, message, sendOptions);
+  }
+  
+  // Clean up
+  orchestratorIntentDetails.delete(intentHashLower);
+  intentDetails.delete(intentHashLower);
+}
+
+async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
+  const { intentHash } = rawIntent;
+  const intentHashLower = intentHash.toLowerCase();
+  
+  // Get stored intent details
+  const storedDetails = orchestratorIntentDetails.get(intentHashLower);
+  if (!storedDetails) {
+    console.log('⚠️ No stored details for intent:', intentHash);
+    return;
+  }
+  
+  const depositId = storedDetails.depositId;
+  
+  const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
+  if (interestedUsers.length === 0) return;
+  
+  console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
+  
+  const message = `
+🟠 *Order Cancelled*
+- *Deposit ID:* \`${depositId}\`
+- *Order ID:* \`${intentHash}\`
+- *Tx:* [View on BaseScan](${txLink(txHash)})
+
+*Order was cancelled*
+`.trim();
+
+  await postToDiscord({
+    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+    content: toDiscordMarkdown(message),
+    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+  });
+
+  for (const chatId of interestedUsers) {
+    await db.updateDepositStatus(chatId, depositId, 'pruned', intentHash);
+    await db.logEventNotification(chatId, depositId, 'pruned');
+    
+    const sendOptions = { 
+      parse_mode: 'Markdown', 
+      disable_web_page_preview: true,
+      reply_markup: createDepositKeyboard(depositId)
+    };
+    if (chatId === ZKP2P_GROUP_ID) {
+      sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
+    }
+    bot.sendMessage(chatId, message, sendOptions);
+  }
+  
+  // Clean up
+  orchestratorIntentDetails.delete(intentHashLower);
+  intentDetails.delete(intentHashLower);
 }
 
 
@@ -2118,74 +2252,32 @@ const handleOrchestratorEvent = async (log) => {
       const intentHashLower = intentHash.toLowerCase();
       const txHash = log.transactionHash;
       
-      console.log('🧪 Orchestrator IntentFulfilled - intentHash:', intentHash);
+      console.log('🧪 Orchestrator IntentFulfilled collected for batching - intentHash:', intentHash);
       
-      // Get stored intent details
-      const storedDetails = orchestratorIntentDetails.get(intentHashLower);
-      if (!storedDetails) {
-        console.log('⚠️ No stored details for intent:', intentHash);
-        return;
+      // Initialize transaction data if not exists
+      if (!pendingTransactions.has(txHash)) {
+        pendingTransactions.set(txHash, {
+          fulfilled: new Set(),
+          pruned: new Set(),
+          blockNumber: log.blockNumber,
+          rawIntents: new Map()
+        });
       }
       
-      // Also try intentDetails for backward compatibility
-      const oldIntentDetails = intentDetails.get(intentHashLower);
-      const verifier = storedDetails.escrow || oldIntentDetails?.verifier || 'Unknown';
-      
-      const depositId = storedDetails.depositId;
-      const { owner, to, fiatCurrency, conversionRate, paymentMethod } = storedDetails;
-      
-      // Try to get platform name from payment method first (Orchestrator v2/v3), fallback to verifier address
-      const platformName = paymentMethod ? getPlatformName(paymentMethod) : getPlatformName(verifier);
-      
-      let rateText = '';
-      if (oldIntentDetails || storedDetails.fiatCurrency) {
-        const fiatCode = getFiatCode(storedDetails.fiatCurrency);
-        const formattedRate = formatConversionRate(storedDetails.conversionRate || 0n, fiatCode);
-        rateText = `\n- *Rate:* ${formattedRate}`;
-      }
-      
-      const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
-      if (interestedUsers.length === 0) return;
-      
-      console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
-      
-      const message = `
-🟢 *Order Fulfilled*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Platform:* ${platformName}
-- *Owner:* \`${owner}\`
-- *To:* \`${fundsTransferredTo}\`
-- *Amount:* ${formatUSDC(amount)} USDC${rateText}
-- *Manual Release:* ${isManualRelease ? 'Yes' : 'No'}
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-`.trim();
-
-      await postToDiscord({
-        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: toDiscordMarkdown(message),
-        components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+      // Store the fulfillment data
+      const txData = pendingTransactions.get(txHash);
+      txData.fulfilled.add(intentHashLower);
+      txData.rawIntents.set(intentHashLower, {
+        eventType: 'orchestrator',
+        type: 'fulfilled',
+        intentHash,
+        fundsTransferredTo,
+        amount,
+        isManualRelease
       });
-
-      for (const chatId of interestedUsers) {
-        await db.updateDepositStatus(chatId, depositId, 'fulfilled', intentHash);
-        await db.logEventNotification(chatId, depositId, 'fulfilled');
-        
-        const sendOptions = { 
-          parse_mode: 'Markdown', 
-          disable_web_page_preview: true,
-          reply_markup: createDepositKeyboard(depositId)
-        };
-        if (chatId === ZKP2P_GROUP_ID) {
-          sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-        }
-        bot.sendMessage(chatId, message, sendOptions);
-      }
       
-      // Clean up
-      orchestratorIntentDetails.delete(intentHashLower);
-      intentDetails.delete(intentHashLower);
+      // Schedule processing this transaction
+      scheduleTransactionProcessing(txHash);
       return;
     }
 
@@ -2194,56 +2286,29 @@ const handleOrchestratorEvent = async (log) => {
       const intentHashLower = intentHash.toLowerCase();
       const txHash = log.transactionHash;
       
-      console.log('🧪 Orchestrator IntentPruned - intentHash:', intentHash);
+      console.log('🧪 Orchestrator IntentPruned collected for batching - intentHash:', intentHash);
       
-      // Get stored intent details
-      const storedDetails = orchestratorIntentDetails.get(intentHashLower);
-      if (!storedDetails) {
-        console.log('⚠️ No stored details for intent:', intentHash);
-        return;
+      // Initialize transaction data if not exists
+      if (!pendingTransactions.has(txHash)) {
+        pendingTransactions.set(txHash, {
+          fulfilled: new Set(),
+          pruned: new Set(),
+          blockNumber: log.blockNumber,
+          rawIntents: new Map()
+        });
       }
       
-      const depositId = storedDetails.depositId;
-      
-      const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
-      if (interestedUsers.length === 0) return;
-      
-      console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
-      
-      const message = `
-🟠 *Order Cancelled*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-
-*Order was cancelled*
-`.trim();
-
-      await postToDiscord({
-        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: toDiscordMarkdown(message),
-        components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+      // Store the pruned data
+      const txData = pendingTransactions.get(txHash);
+      txData.pruned.add(intentHashLower);
+      txData.rawIntents.set(intentHashLower, {
+        eventType: 'orchestrator',
+        type: 'pruned',
+        intentHash
       });
-
-      for (const chatId of interestedUsers) {
-        await db.updateDepositStatus(chatId, depositId, 'pruned', intentHash);
-        await db.logEventNotification(chatId, depositId, 'pruned');
-        
-        const sendOptions = { 
-          parse_mode: 'Markdown', 
-          disable_web_page_preview: true,
-          reply_markup: createDepositKeyboard(depositId)
-        };
-        if (chatId === ZKP2P_GROUP_ID) {
-          sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-        }
-        bot.sendMessage(chatId, message, sendOptions);
-      }
       
-      // Clean up
-      orchestratorIntentDetails.delete(intentHashLower);
-      intentDetails.delete(intentHashLower);
+      // Schedule processing this transaction
+      scheduleTransactionProcessing(txHash);
       return;
     }
 
