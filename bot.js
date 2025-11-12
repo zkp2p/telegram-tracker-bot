@@ -591,6 +591,11 @@ let exchangeRatesCache = null;
 let lastRatesFetch = 0;
 const RATES_CACHE_DURATION = 60000; // 1 minute cache
 
+// ARS rate cache (CriptoYa API)
+let arsRateCache = null;
+let lastARSFetch = 0;
+const ARS_CACHE_DURATION = 60000; // 1 minute cache
+
 async function getExchangeRates() {
   const now = Date.now();
   
@@ -614,6 +619,36 @@ async function getExchangeRates() {
     }
   } catch (error) {
     console.error('❌ Failed to fetch exchange rates:', error);
+    return null;
+  }
+}
+
+// Fetch ARS rate from CriptoYa API
+async function getARSRate() {
+  const now = Date.now();
+  
+  // Return cached rate if still fresh
+  if (arsRateCache && (now - lastARSFetch) < ARS_CACHE_DURATION) {
+    return arsRateCache;
+  }
+  
+  try {
+    const response = await fetch('https://criptoya.com/api/dolar');
+    const data = await response.json();
+    
+    if (data && data.cripto && data.cripto.usdc && data.cripto.usdc.ask && data.cripto.usdc.bid) {
+      // Use USDC mid price (average of ask and bid)
+      const midPrice = (data.cripto.usdc.ask + data.cripto.usdc.bid) / 2;
+      arsRateCache = midPrice;
+      lastARSFetch = now;
+      console.log(`📊 ARS rate updated from CriptoYa: ${arsRateCache} ARS/USDC (mid: ask=${data.cripto.usdc.ask}, bid=${data.cripto.usdc.bid})`);
+      return arsRateCache;
+    } else {
+      console.error('❌ CriptoYa API error: missing cripto.usdc rate', data);
+      return null;
+    }
+  } catch (error) {
+    console.error('❌ Failed to fetch ARS rate from CriptoYa:', error);
     return null;
   }
 }
@@ -1408,18 +1443,29 @@ async function checkSniperOpportunity(depositId, depositAmount, currencyHash, co
   
   console.log(`🎯 Checking sniper opportunity for deposit ${depositId}, currency: ${currencyCode}`);
   
-  // Get current exchange rates
-  const exchangeRates = await getExchangeRates();
-  if (!exchangeRates) {
-    console.log('❌ No exchange rates available for sniper check');
-    return;
-  }
-  
-  // For USD, market rate is always 1.0 - better to hardcode than to call the api (i guess)
-  const marketRate = currencyCode === 'USD' ? 1.0 : exchangeRates[currencyCode];
-  if (!marketRate) {
-    console.log(`❌ No market rate found for ${currencyCode}`);
-    return;
+  // Get market rate - use CriptoYa API for ARS, otherwise use standard exchange API
+  let marketRate;
+  if (currencyCode === 'ARS') {
+    marketRate = await getARSRate();
+    if (!marketRate) {
+      console.log('❌ No ARS rate available from CriptoYa');
+      return;
+    }
+  } else if (currencyCode === 'USD') {
+    // For USD, market rate is always 1.0 - better to hardcode than to call the api (i guess)
+    marketRate = 1.0;
+  } else {
+    // Get current exchange rates for other currencies
+    const exchangeRates = await getExchangeRates();
+    if (!exchangeRates) {
+      console.log('❌ No exchange rates available for sniper check');
+      return;
+    }
+    marketRate = exchangeRates[currencyCode];
+    if (!marketRate) {
+      console.log(`❌ No market rate found for ${currencyCode}`);
+      return;
+    }
   }
   
   // Calculate rates
