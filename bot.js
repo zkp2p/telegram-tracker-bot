@@ -948,6 +948,9 @@ const escrowContractAddress = '0xca38607d85e8f6294dc10728669605e6664c2d70';
 // ZKP2P Orchestrator contract on Base (v2)
 const orchestratorContractAddress = '0x88888883Ed048FF0a415271B28b2F52d431810D0';
 
+// ZKP2P V3 Escrow contract on Base
+const escrowV3ContractAddress = '0x2f121cddca6d652f35e8b3e560f9760898888888';
+
 // ABI with exact event definitions from the contract (including sniper events)
 const abi = [
   `event IntentSignaled(
@@ -1052,8 +1055,34 @@ const orchestratorAbi = [
 )`
 ];
 
+// V3 Escrow ABI - different event structure
+const escrowV3Abi = [
+  `event DepositReceived(
+    uint256 indexed depositId,
+    address indexed depositor,
+    address indexed token,
+    uint256 amount,
+    tuple(uint256,uint256) intentAmountRange,
+    address delegate,
+    address intentGuardian
+  )`,
+  `event DepositCurrencyAdded(
+    uint256 indexed depositId,
+    bytes32 indexed paymentMethod,
+    bytes32 indexed currency,
+    uint256 minConversionRate
+  )`,
+  `event DepositPaymentMethodAdded(
+    uint256 indexed depositId,
+    bytes32 indexed paymentMethod,
+    bytes32 indexed payeeDetails,
+    address intentGatingService
+  )`
+];
+
 const iface = new Interface(abi);
 const orchestratorIface = new Interface(orchestratorAbi);
+const escrowV3Iface = new Interface(escrowV3Abi);
 const pendingTransactions = new Map(); // txHash -> {fulfilled: Set, pruned: Set, blockNumber: number, rawIntents: Map}
 const processingScheduled = new Set(); // Track which transactions are scheduled for processing
 
@@ -1441,9 +1470,18 @@ async function checkSniperOpportunity(depositId, depositAmount, currencyHash, co
   const currencyCode = currencyHashToCode[currencyHash.toLowerCase()];
   const platformName = getPlatformName(verifierAddress).toLowerCase();
 
-  if (!currencyCode) return; // Only skip unknown currencies
+  if (!currencyCode) {
+    console.log(`⚠️ Unknown currency hash: ${currencyHash}, skipping sniper check`);
+    return; // Only skip unknown currencies
+  }
   
-  console.log(`🎯 Checking sniper opportunity for deposit ${depositId}, currency: ${currencyCode}`);
+  // Check if deposit amount is valid
+  if (!depositAmount || Number(depositAmount) <= 0) {
+    console.log(`⚠️ Invalid deposit amount for deposit ${depositId}: ${depositAmount}, skipping sniper check`);
+    return;
+  }
+  
+  console.log(`🎯 Checking sniper opportunity for deposit ${depositId}, currency: ${currencyCode}, amount: ${(Number(depositAmount) / 1e6).toFixed(2)} USDC`);
   
   // Get market rate - use CriptoYa API for ARS, otherwise use standard exchange API
   let marketRate;
@@ -1491,7 +1529,14 @@ if (interestedUsers.length > 0) {
   for (const chatId of interestedUsers) {
     const userThreshold = await db.getUserThreshold(chatId);
     
-    if (percentageDiff >= userThreshold) {
+    // For USD deposits: if rate is 1.0 (parity), percentageDiff is 0%
+    // Alert if percentageDiff >= threshold. For threshold <= 0%, this will alert on parity
+    // For other currencies: alert if rate is better than market by threshold amount
+    const shouldAlert = percentageDiff >= userThreshold;
+    
+    console.log(`📊 User ${chatId}: threshold=${userThreshold}%, diff=${percentageDiff.toFixed(2)}%, shouldAlert=${shouldAlert}`);
+    
+    if (shouldAlert) {
       console.log(`🎯 SNIPER OPPORTUNITY for user ${chatId}! ${percentageDiff.toFixed(2)}% >= ${userThreshold}%`);
       
       const formattedAmount = (Number(depositAmount) / 1e6).toFixed(2);
@@ -1664,8 +1709,10 @@ bot.onText(/\/status/, async (msg) => {
   try {
     const escrowConnected = resilientProvider?.isConnected || false;
     const orchestratorConnected = orchestratorProvider?.isConnected || false;
+    const escrowV3Connected = escrowV3Provider?.isConnected || false;
     const escrowStatus = escrowConnected ? '🟢 Connected' : '🔴 Disconnected';
     const orchestratorStatus = orchestratorConnected ? '🟢 Connected' : '🔴 Disconnected';
+    const escrowV3Status = escrowV3Connected ? '🟢 Connected' : '🔴 Disconnected';
     
     // Test database connection
     let dbStatus = '🔴 Disconnected';
@@ -1692,6 +1739,7 @@ bot.onText(/\/status/, async (msg) => {
     let message = `🔧 *System Status:*\n\n`;
     message += `• *Escrow WebSocket (v1):* ${escrowStatus}\n`;
     message += `• *Orchestrator WebSocket (v2):* ${orchestratorStatus}\n`;
+    message += `• *Escrow WebSocket (v3):* ${escrowV3Status}\n`;
     message += `• *Database:* ${dbStatus}\n`;
     message += `• *Telegram:* ${botStatus}\n\n`;
     message += `📊 *Your Settings:*\n`;
@@ -1712,13 +1760,16 @@ bot.onText(/\/status/, async (msg) => {
     }
     
     // Add reconnection info if disconnected
-    if ((!escrowConnected && resilientProvider) || (!orchestratorConnected && orchestratorProvider)) {
+    if ((!escrowConnected && resilientProvider) || (!orchestratorConnected && orchestratorProvider) || (!escrowV3Connected && escrowV3Provider)) {
       message += `\n⚠️ *Reconnection Attempts:*`;
       if (!escrowConnected && resilientProvider) {
         message += `\n• Escrow (v1): ${resilientProvider.reconnectAttempts}/${resilientProvider.maxReconnectAttempts}`;
       }
       if (!orchestratorConnected && orchestratorProvider) {
         message += `\n• Orchestrator (v2): ${orchestratorProvider.reconnectAttempts}/${orchestratorProvider.maxReconnectAttempts}`;
+      }
+      if (!escrowV3Connected && escrowV3Provider) {
+        message += `\n• Escrow (v3): ${escrowV3Provider.reconnectAttempts}/${escrowV3Provider.maxReconnectAttempts}`;
       }
     }
     
@@ -2162,12 +2213,19 @@ if (name === 'DepositVerifierAdded') {
   if (name === 'DepositCurrencyAdded') {
     const { depositId, verifier, currency, conversionRate } = parsed.args;  
     const id = Number(depositId);
+    const fiatCode = getFiatCode(currency);
     
-    console.log('🎯 DepositCurrencyAdded detected:', id);
+    console.log(`🎯 DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}`);
     
     // Get the actual deposit amount
     const depositAmount = await db.getDepositAmount(id);
     console.log(`💰 Retrieved deposit amount: ${depositAmount} (${formatUSDC(depositAmount)} USDC)`);
+    
+    // If deposit amount is not available yet, log and skip (it will be checked on rate updates)
+    if (!depositAmount || Number(depositAmount) <= 0) {
+      console.log(`⚠️ Deposit amount not available yet for deposit ${id}, will check on rate updates`);
+      return;
+    }
     
     // Check for sniper opportunity with real amount
     await checkSniperOpportunity(id, depositAmount, currency, conversionRate, verifier);
@@ -2183,6 +2241,77 @@ console.log(`ℹ️ Unhandled Escrow event: ${name} - ignoring`);
     console.log('📝 Topics received:', log.topics);
     console.log('📝 First topic (event signature):', log.topics[0]);
     console.log('🔄 Continuing to listen for other events...');
+  }
+};
+
+// V3 Escrow event handler - only processes deposit-related events
+const handleEscrowV3Event = async (log) => {
+  // Only process events from V3 Escrow contract
+  if (log.address.toLowerCase() !== escrowV3ContractAddress.toLowerCase()) {
+    return; // Ignore events from other contracts
+  }
+
+  try {
+    const parsed = escrowV3Iface.parseLog({ 
+      data: log.data, 
+      topics: log.topics 
+    });
+    
+    // If event doesn't match our ABI, silently ignore it (likely not a deposit event)
+    if (!parsed) {
+      return;
+    }
+    
+    const { name } = parsed;
+
+    // Only handle these three deposit-related events - ignore everything else silently
+    if (name === 'DepositReceived') {
+      const { depositId, depositor, token, amount, intentAmountRange, delegate, intentGuardian } = parsed.args;
+      const id = Number(depositId);
+      const usdcAmount = Number(amount);
+      
+      console.log(`💰 V3 Escrow DepositReceived: ${id} with ${formatUSDC(amount)} USDC`);
+      
+      // Store the deposit amount for later sniper use
+      await db.storeDepositAmount(id, usdcAmount);
+      return;
+    }
+
+    if (name === 'DepositCurrencyAdded') {
+      const { depositId, paymentMethod, currency, minConversionRate } = parsed.args;
+      const id = Number(depositId);
+      const fiatCode = getFiatCode(currency);
+      
+      console.log(`🎯 V3 Escrow DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}`);
+      
+      // Get the actual deposit amount
+      const depositAmount = await db.getDepositAmount(id);
+      console.log(`💰 Retrieved deposit amount: ${depositAmount} (${formatUSDC(depositAmount)} USDC)`);
+      
+      // If deposit amount is not available yet, log and skip (it will be checked on rate updates)
+      if (!depositAmount || Number(depositAmount) <= 0) {
+        console.log(`⚠️ Deposit amount not available yet for deposit ${id}, will check on rate updates`);
+        return;
+      }
+      
+      // For V3 Escrow, paymentMethod is the identifier (not verifier address)
+      // minConversionRate is the minimum rate, use it for sniper check
+      await checkSniperOpportunity(id, depositAmount, currency, minConversionRate, paymentMethod);
+      return;
+    }
+
+    if (name === 'DepositPaymentMethodAdded') {
+      // This event is deposit-related but we don't need to do anything with it
+      // Silently ignore - we only care about DepositReceived and DepositCurrencyAdded
+      return;
+    }
+
+    // All other parsed events are ignored silently (shouldn't happen with our ABI, but just in case)
+    return;
+
+  } catch (err) {
+    // Silently ignore parsing errors - these are likely non-deposit events we don't care about
+    return;
   }
 };
 
@@ -2393,11 +2522,19 @@ const orchestratorProvider = new ResilientWebSocketProvider(
   handleOrchestratorEvent
 );
 
+// Initialize WebSocket provider for V3 Escrow contract
+const escrowV3Provider = new ResilientWebSocketProvider(
+  process.env.BASE_RPC,
+  escrowV3ContractAddress,
+  handleEscrowV3Event
+);
+
 // Add startup message
 console.log('🤖 ZKP2P Telegram Bot Started (Supabase Integration with Auto-Reconnect + Sniper)');
 console.log('🔍 Listening for contract events...');
 console.log(`📡 Escrow Contract (v1): ${escrowContractAddress}`);
 console.log(`📡 Orchestrator Contract (v2): ${orchestratorContractAddress}`);
+console.log(`📡 Escrow Contract (v3): ${escrowV3ContractAddress}`);
 
 // Improved graceful shutdown with proper cleanup
 const gracefulShutdown = async (signal) => {
@@ -2411,6 +2548,10 @@ const gracefulShutdown = async (signal) => {
     
     if (orchestratorProvider) {
       await orchestratorProvider.destroy();
+    }
+    
+    if (escrowV3Provider) {
+      await escrowV3Provider.destroy();
     }
     
     // Stop the Telegram bot
@@ -2445,6 +2586,9 @@ process.on('uncaughtException', (error) => {
     if (orchestratorProvider) {
       orchestratorProvider.restart();
     }
+    if (escrowV3Provider) {
+      escrowV3Provider.restart();
+    }
   }
 });
 
@@ -2461,6 +2605,9 @@ process.on('unhandledRejection', (reason, promise) => {
     if (orchestratorProvider) {
       orchestratorProvider.restart();
     }
+    if (escrowV3Provider) {
+      escrowV3Provider.restart();
+    }
   }
 });
 
@@ -2471,11 +2618,15 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Health check interval
 setInterval(async () => {
   if (resilientProvider && !resilientProvider.isConnected) {
-    console.log('🔍 Health check: Escrow WebSocket disconnected, attempting restart...');
+    console.log('🔍 Health check: Escrow WebSocket (v1) disconnected, attempting restart...');
     await resilientProvider.restart();
   }
   if (orchestratorProvider && !orchestratorProvider.isConnected) {
-    console.log('🔍 Health check: Orchestrator WebSocket disconnected, attempting restart...');
+    console.log('🔍 Health check: Orchestrator WebSocket (v2) disconnected, attempting restart...');
     await orchestratorProvider.restart();
+  }
+  if (escrowV3Provider && !escrowV3Provider.isConnected) {
+    console.log('🔍 Health check: Escrow WebSocket (v3) disconnected, attempting restart...');
+    await escrowV3Provider.restart();
   }
 }, 120000); // Check every two minutes
