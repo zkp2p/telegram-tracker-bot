@@ -296,6 +296,7 @@ async setUserSniper(chatId, currency, platform = null) {
       chat_id: chatId,
       currency: currency.toUpperCase(),
       platform: platform ? platform.toLowerCase() : null,
+      is_active: true,
       created_at: new Date().toISOString()
     });
   
@@ -344,6 +345,7 @@ async getUserSnipers(chatId) {
     .from('user_snipers')
     .select('chat_id, currency, platform, created_at')
     .eq('currency', currency.toUpperCase())
+    .eq('is_active', true)
     .gte('created_at', thirtyDaysAgo.toISOString());
   
   // If platform is specified, match exactly OR get users with null platform (all platforms)
@@ -2238,6 +2240,13 @@ const handleOrchestratorEvent = async (log) => {
       
       // Also add to intentDetails for backward compatibility with sniper logic
       intentDetails.set(intentHashLower, { fiatCurrency, conversionRate, verifier: escrow });
+      
+      // Store deposit amount for sniper checks
+      const usdcAmount = Number(amount);
+      await db.storeDepositAmount(id, usdcAmount);
+      
+      // Check for sniper opportunity (orchestrator uses paymentMethod as verifier identifier)
+      await checkSniperOpportunity(id, usdcAmount, fiatCurrency, conversionRate, paymentMethod);
       
       const fiatCode = getFiatCode(fiatCurrency);
       const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
