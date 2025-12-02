@@ -2374,9 +2374,6 @@ const handleOrchestratorEvent = async (log) => {
       const usdcAmount = Number(amount);
       await db.storeDepositAmount(id, usdcAmount);
       
-      // Check for sniper opportunity (orchestrator uses paymentMethod as verifier identifier)
-      await checkSniperOpportunity(id, usdcAmount, fiatCurrency, conversionRate, paymentMethod);
-      
       const fiatCode = getFiatCode(fiatCurrency);
       const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
       const formattedRate = formatConversionRate(conversionRate, fiatCode);
