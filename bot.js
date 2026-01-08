@@ -20,7 +20,6 @@ const orchestratorIntentDetails = new Map(); // intentHash -> {depositId, escrow
 
 // Database helper functions
 class DatabaseManager {
-  // Initialize user if not exists
   async initUser(chatId, username = null, firstName = null, lastName = null) {
     const { data, error } = await supabase
       .from('users')
@@ -39,7 +38,6 @@ class DatabaseManager {
     return data;
   }
 
-  // Get user's ACTIVE tracked deposits only
   async getUserDeposits(chatId) {
     const { data, error } = await supabase
       .from('user_deposits')
@@ -55,7 +53,6 @@ class DatabaseManager {
     return new Set(data.map(row => row.deposit_id));
   }
 
-  // Get user's ACTIVE deposit states only
   async getUserDepositStates(chatId) {
     const { data, error } = await supabase
       .from('user_deposits')
@@ -79,7 +76,6 @@ class DatabaseManager {
     return statesMap;
   }
 
-  // Add deposit for user (always creates as active)
   async addUserDeposit(chatId, depositId) {
     const { error } = await supabase
       .from('user_deposits')
@@ -110,7 +106,6 @@ class DatabaseManager {
     if (error) console.error('Error removing deposit:', error);
   }
 
-  // Update deposit status (only for active deposits)
   async updateDepositStatus(chatId, depositId, status, intentHash = null) {
     const updateData = { 
       status: status,
@@ -131,7 +126,6 @@ class DatabaseManager {
     if (error) console.error('Error updating deposit status:', error);
   }
 
-  // Get ACTIVE listen all preference only
   async getUserListenAll(chatId) {
     const { data, error } = await supabase
       .from('user_settings')
@@ -165,7 +159,6 @@ class DatabaseManager {
   async clearUserData(chatId) {
     const timestamp = new Date().toISOString();
     
-    // Mark deposits as inactive instead of deleting
     const { error: error1 } = await supabase
       .from('user_deposits')
       .update({ 
@@ -174,7 +167,6 @@ class DatabaseManager {
       })
       .eq('chat_id', chatId);
     
-    // Mark settings as inactive instead of deleting  
     const { error: error2 } = await supabase
       .from('user_settings')
       .update({ 
@@ -183,7 +175,6 @@ class DatabaseManager {
       })
       .eq('chat_id', chatId);
 
-    // Clear sniper settings too
     const { error: error3 } = await supabase
       .from('user_snipers')
       .update({ 
@@ -213,14 +204,12 @@ class DatabaseManager {
 
   // Get users interested in a deposit (only ACTIVE users/settings)
   async getUsersInterestedInDeposit(depositId) {
-    // Users listening to all deposits (ACTIVE settings only)
     const { data: allListeners } = await supabase
       .from('user_settings')
       .select('chat_id')
       .eq('listen_all', true)
       .eq('is_active', true); // Only active "listen all" users
     
-    // Users tracking specific deposit (ACTIVE tracking only)
     const { data: specificTrackers } = await supabase
       .from('user_deposits')
       .select('chat_id')
@@ -235,7 +224,6 @@ class DatabaseManager {
     return Array.from(allUsers);
   }
 
-  // BONUS: Analytics methods (new!)
   async getAnalytics() {
     // Total users who ever used the bot
     const { data: totalUsers } = await supabase
@@ -267,111 +255,106 @@ class DatabaseManager {
     };
   }
   
-async removeUserSniper(chatId, currency = null, platform = null) {
-  let query = supabase
-    .from('user_snipers')
-    .update({ 
-      is_active: false,
-      updated_at: new Date().toISOString()
-    })
-    .eq('chat_id', chatId);
-  
-  if (currency) {
-    query = query.eq('currency', currency.toUpperCase());
-  }
-  
-  if (platform) {
-    query = query.eq('platform', platform.toLowerCase());
-  }
-  
-  const { error } = await query;
-  if (error) console.error('Error removing sniper:', error);
-}
+  async removeUserSniper(chatId, currency = null, platform = null) {
+    let query = supabase
+      .from('user_snipers')
+      .update({
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('chat_id', chatId);
 
-async setUserSniper(chatId, currency, platform = null) {
-  // Always insert - no deactivation needed
-  const { error } = await supabase
-    .from('user_snipers')
-    .insert({
-      chat_id: chatId,
-      currency: currency.toUpperCase(),
-      platform: platform ? platform.toLowerCase() : null,
-      is_active: true,
-      created_at: new Date().toISOString()
-    });
-  
-  if (error) {
-    console.error('Error setting sniper:', error);
-    return false;
-  }
-  return true;
-}
-
-async getUserSnipers(chatId) {
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const { data, error } = await supabase
-    .from('user_snipers')
-    .select('currency, platform, created_at')
-    .eq('chat_id', chatId)
-    .eq('is_active', true) 
-    .gte('created_at', thirtyDaysAgo.toISOString())
-    .order('created_at', { ascending: false });
-  
-  if (error) {
-    console.error('Error fetching user snipers:', error);
-    return [];
-  }
-  
-  // Deduplicate - keep only the newest entry for each currency+platform combo
-  const unique = new Map();
-  data.forEach(row => {
-    const key = `${row.currency}-${row.platform ?? 'all'}`; // ← Add fallback for null
-    const existing = unique.get(key);
-    if (!existing || new Date(row.created_at) > new Date(existing.created_at)) {
-      unique.set(key, row);
+    if (currency) {
+      query = query.eq('currency', currency.toUpperCase());
     }
-  });
 
-  return Array.from(unique.values());
-}
+    if (platform) {
+      query = query.eq('platform', platform.toLowerCase());
+    }
+
+    const { error } = await query;
+    if (error) console.error('Error removing sniper:', error);
+  }
+
+  async setUserSniper(chatId, currency, platform = null) {
+    const { error } = await supabase
+      .from('user_snipers')
+      .insert({
+        chat_id: chatId,
+        currency: currency.toUpperCase(),
+        platform: platform ? platform.toLowerCase() : null,
+        is_active: true,
+        created_at: new Date().toISOString()
+      });
+
+    if (error) {
+      console.error('Error setting sniper:', error);
+      return false;
+    }
+    return true;
+  }
+
+  async getUserSnipers(chatId) {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const { data, error } = await supabase
+      .from('user_snipers')
+      .select('currency, platform, created_at')
+      .eq('chat_id', chatId)
+      .eq('is_active', true)
+      .gte('created_at', thirtyDaysAgo.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching user snipers:', error);
+      return [];
+    }
+
+    const unique = new Map();
+    data.forEach(row => {
+      const key = `${row.currency}-${row.platform ?? 'all'}`;
+      const existing = unique.get(key);
+      if (!existing || new Date(row.created_at) > new Date(existing.created_at)) {
+        unique.set(key, row);
+      }
+    });
+
+    return Array.from(unique.values());
+  }
 
   async getUsersWithSniper(currency, platform = null) {
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  let query = supabase
-    .from('user_snipers')
-    .select('chat_id, currency, platform, created_at')
-    .eq('currency', currency.toUpperCase())
-    .eq('is_active', true)
-    .gte('created_at', thirtyDaysAgo.toISOString());
-  
-  // If platform is specified, match exactly OR get users with null platform (all platforms)
-  if (platform) {
-    // Get users who either specified this platform OR want all platforms (null)
-    query = query.or(`platform.eq.${platform.toLowerCase()},platform.is.null`);
-  }
-  
-  const { data, error } = await query;
-  
-  if (error) {
-    console.error('Error fetching users with sniper:', error);
-    return [];
-  }
-  
-  // Deduplicate by chat_id - if user has multiple entries, keep the newest
-  const userMap = new Map();
-  data.forEach(row => {
-    const existing = userMap.get(row.chat_id);
-    if (!existing || new Date(row.created_at) > new Date(existing.created_at)) {
-      userMap.set(row.chat_id, row);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    let query = supabase
+      .from('user_snipers')
+      .select('chat_id, currency, platform, created_at')
+      .eq('currency', currency.toUpperCase())
+      .eq('is_active', true)
+      .gte('created_at', thirtyDaysAgo.toISOString());
+
+    if (platform) {
+      query = query.or(`platform.eq.${platform.toLowerCase()},platform.is.null`);
     }
-  });
-  
-  return Array.from(userMap.keys()); // Return just the chat IDs
-}
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error fetching users with sniper:', error);
+      return [];
+    }
+
+    const userMap = new Map();
+    data.forEach(row => {
+      const existing = userMap.get(row.chat_id);
+      if (!existing || new Date(row.created_at) > new Date(existing.created_at)) {
+        userMap.set(row.chat_id, row);
+      }
+    });
+
+    return Array.from(userMap.keys());
+  }
 
   async logSniperAlert(chatId, depositId, currency, depositRate, marketRate, percentageDiff) {
     const { error } = await supabase
@@ -390,73 +373,66 @@ async getUserSnipers(chatId) {
   }
 
   async storeDepositAmount(depositId, amount) {
-  // Store in memory for quick access
     depositAmounts.set(Number(depositId), Number(amount));
-  
-  // Also store in database for persistence
-  const { error } = await supabase
-    .from('deposit_amounts')
-    .upsert({ 
-      deposit_id: Number(depositId),
-      amount: Number(amount),
-      created_at: new Date().toISOString()
-    }, { 
-      onConflict: 'deposit_id' 
-    });
-  
+
+    const { error } = await supabase
+      .from('deposit_amounts')
+      .upsert({
+        deposit_id: Number(depositId),
+        amount: Number(amount),
+        created_at: new Date().toISOString()
+      }, {
+        onConflict: 'deposit_id'
+      });
+
     if (error) console.error('Error storing deposit amount:', error);
   }
 
   async getDepositAmount(depositId) {
-  // Try memory first
     const memoryAmount = depositAmounts.get(Number(depositId));
     if (memoryAmount) return memoryAmount;
-  
-  // Fall back to database
+
     const { data, error } = await supabase
       .from('deposit_amounts')
       .select('amount')
       .eq('deposit_id', Number(depositId))
       .single();
-  
+
     if (error) {
       console.error('Error getting deposit amount:', error);
       return 0;
     }
-  
+
     return data?.amount || 0;
   }
-// Get user's global sniper threshold
-async getUserThreshold(chatId) {
-  const { data, error } = await supabase
-    .from('user_settings')
-    .select('threshold')
-    .eq('chat_id', chatId)
-    .eq('is_active', true)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    console.error('Error getting user threshold:', error);
-  }
-  return data?.threshold || 0.2; // Default to 0.2% if not set
-}
+  async getUserThreshold(chatId) {
+    const { data, error } = await supabase
+      .from('user_settings')
+      .select('threshold')
+      .eq('chat_id', chatId)
+      .eq('is_active', true)
+      .single();
 
-// Set user's global sniper threshold
-async setUserThreshold(chatId, threshold) {
-  const { error } = await supabase
-    .from('user_settings')
-    .upsert({ 
-      chat_id: chatId, 
-      threshold: threshold,
-      is_active: true,
-      updated_at: new Date().toISOString()
-    }, { 
-      onConflict: 'chat_id' 
-    });
-  
-  if (error) console.error('Error setting user threshold:', error);
-}
-  
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error getting user threshold:', error);
+    }
+    return data?.threshold || 0.2;
+  }
+
+  async setUserThreshold(chatId, threshold) {
+    const { error } = await supabase
+      .from('user_settings')
+      .upsert({
+        chat_id: chatId,
+        threshold: threshold,
+        is_active: true,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'chat_id'
+      });
+
+    if (error) console.error('Error setting user threshold:', error);
+  }
 }
 
 async function postToDiscord({
@@ -892,7 +868,6 @@ class ResilientWebSocketProvider {
     }, delay);
   }
 
-  // Add manual restart method
   async restart() {
     console.log('🔄 Manual restart initiated...');
     this.reconnectAttempts = 0;
@@ -914,7 +889,6 @@ class ResilientWebSocketProvider {
     }, 3000); // Increased delay
   }
 
-  // Add proper destroy method
   async destroy() {
     console.log('🛑 Destroying WebSocket provider...');
     this.isDestroyed = true;
@@ -1494,7 +1468,6 @@ async function checkSniperOpportunity(depositId, depositAmount, currencyHash, co
       return;
     }
   } else if (currencyCode === 'USD') {
-    // For USD, market rate is always 1.0 - better to hardcode than to call the api (i guess)
     marketRate = 1.0;
   } else {
     // Get current exchange rates for other currencies
@@ -1871,45 +1844,7 @@ bot.onText(/\/unsnipe (.+)/, async (msg, match) => {
   bot.sendMessage(chatId, `🎯 Stopped sniping ${currency}${platformText}.`, { parse_mode: 'Markdown' });
 });
 
-// Handle /start command - show help
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  const helpMessage = `
-🤖 *ZKP2P Tracker Commands:*
-
-**Deposit Tracking:**
-- \`/deposit all\` - Listen to ALL deposits (every event)
-- \`/deposit stop\` - Stop listening to all deposits
-- \`/deposit 123\` - Track a specific deposit
-- \`/deposit 123,456,789\` - Track multiple deposits
-- \`/remove 123\` - Stop tracking specific deposit(s)
-
-**Sniper (Arbitrage Alerts):**
-- \`/sniper eur\` - Snipe EUR on ALL platforms
-- \`/sniper eur revolut\` - Snipe EUR only on Revolut
-- \`/sniper usd zelle\` - Snipe USD only on Zelle
-- \`/sniper threshold 0.5\` - Set your alert threshold to 0.5%
-- \`/sniper list\` - Show active sniper settings
-- \`/sniper clear\` - Clear all sniper settings
-- \`/unsnipe eur\` - Stop sniping EUR (all platforms)
-- \`/unsnipe eur wise\` - Stop sniping EUR on Wise only
-
-**General:**
-- \`/list\` - Show all tracking status (deposits + snipers)
-- \`/clearall\` - Stop all tracking and clear everything
-- \`/status\` - Check WebSocket connection and settings
-- \`/help\` - Show this help message
-
-*Note: Each user has their own settings. Sniper alerts you when deposits offer better exchange rates than market!*
-`.trim();
-  
-  bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-});
-
-
-bot.onText(/\/help/, (msg) => {
-  const chatId = msg.chat.id;
-  const helpMessage = `
+const helpMessage = `
 🤖 *ZKP2P Tracker Commands:*
 
 **Deposit Tracking:**
@@ -1920,14 +1855,14 @@ bot.onText(/\/help/, (msg) => {
 • \`/remove 123\` - Stop tracking specific deposit(s)
 
 **Sniper (Arbitrage Alerts):**
-- \`/sniper eur\` - Snipe EUR on ALL platforms
-- \`/sniper eur revolut\` - Snipe EUR only on Revolut
-- \`/sniper usd zelle\` - Snipe USD only on Zelle
-- \`/sniper threshold 0.5\` - Set your alert threshold to 0.5%
-- \`/sniper list\` - Show active sniper settings
-- \`/sniper clear\` - Clear all sniper settings
-- \`/unsnipe eur\` - Stop sniping EUR (all platforms)
-- \`/unsnipe eur wise\` - Stop sniping EUR on Wise only
+• \`/sniper eur\` - Snipe EUR on ALL platforms
+• \`/sniper eur revolut\` - Snipe EUR only on Revolut
+• \`/sniper usd zelle\` - Snipe USD only on Zelle
+• \`/sniper threshold 0.5\` - Set your alert threshold to 0.5%
+• \`/sniper list\` - Show active sniper settings
+• \`/sniper clear\` - Clear all sniper settings
+• \`/unsnipe eur\` - Stop sniping EUR (all platforms)
+• \`/unsnipe eur wise\` - Stop sniping EUR on Wise only
 
 **General:**
 • \`/list\` - Show all tracking status (deposits + snipers)
@@ -1937,8 +1872,13 @@ bot.onText(/\/help/, (msg) => {
 
 *Note: Each user has their own settings. Sniper alerts you when deposits offer better exchange rates than market!*
 `.trim();
-  
-  bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, helpMessage, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/\/help/, (msg) => {
+  bot.sendMessage(msg.chat.id, helpMessage, { parse_mode: 'Markdown' });
 });
 
 // Event handler function - now with sniper support
@@ -2211,7 +2151,6 @@ if (name === 'DepositVerifierAdded') {
   return;
 }
 
-    // NEW: Handle DepositCurrencyAdded for sniper functionality
   if (name === 'DepositCurrencyAdded') {
     const { depositId, verifier, currency, conversionRate } = parsed.args;  
     const id = Number(depositId);
