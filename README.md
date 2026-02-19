@@ -49,7 +49,17 @@ BASE_RPC=your_base_rpc_url
 SUPABASE_URL=your_supabase_url
 SUPABASE_ANON_KEY=your_supabase_key
 EXCHANGE_API_KEY=your_exchange_rate_api_key
+
+# Observability (OpenTelemetry -> Better Stack)
+BETTERSTACK_SOURCE_TOKEN=your_betterstack_source_token
+OTEL_SERVICE_NAME=telegram-tracker-bot
+DEPLOYMENT_ENVIRONMENT=production
 ```
+
+### Observability
+- Tracing is preloaded automatically at startup (`node -r ./telemetry/register.js bot.js`)
+- Pino logs include `trace_id` + `span_id` from active OTel context
+- Full setup and ops runbook: [`docs/observability.md`](docs/observability.md)
 
 ## 📊 Supported Events
 - `DepositReceived` - New deposits created
