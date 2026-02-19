@@ -1,5 +1,6 @@
 const { Writable } = require('stream');
 const pino = require('pino');
+const { createPinoTraceMixin } = require('./telemetry/pino-correlation.js');
 
 const SERVICE_NAME = process.env.SERVICE_NAME || 'telegram-tracker-bot';
 const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
@@ -111,6 +112,7 @@ const pinoLogger = pino(
       service: SERVICE_NAME,
       env: process.env.NODE_ENV || 'development',
     },
+    mixin: createPinoTraceMixin(),
     messageKey: 'message',
     timestamp: pino.stdTimeFunctions.isoTime,
     formatters: {
@@ -216,4 +218,14 @@ async function flushLogs() {
 module.exports = {
   logger,
   flushLogs,
+  __private: {
+    BetterStackStream,
+    createLogger,
+    log,
+    normalizeError,
+    normalizeMeta,
+    normalizeValue,
+    parseArgs,
+    sendToBetterStack,
+  },
 };
