@@ -1513,14 +1513,28 @@ if (interestedUsers.length > 0) {
     
     if (shouldAlert) {
       console.log(`🎯 SNIPER OPPORTUNITY for user ${chatId}! ${percentageDiff.toFixed(2)}% >= ${userThreshold}%`);
-      
+
       const formattedAmount = (Number(depositAmount) / 1e6).toFixed(2);
-      const message = `
+      const isOneToOne = Math.abs(percentageDiff) < 0.1; // Within 0.1% of market rate = parity
+
+      let message;
+      if (isOneToOne) {
+        message = `
+🚨 *1:1 DEPOSIT - ${currencyCode}*
+🏦 *Platform:* ${platformName}
+📊 Deposit #${depositId}: ${formattedAmount} USDC
+💰 Rate: ${depositRate.toFixed(4)} ${currencyCode}/USD
+
+🔥 *ZERO PREMIUM, onramp at 1:1 right now!*
+⚡ ${formattedAmount} USDC available on ${platformName} at exact market rate. Be fast!
+`.trim();
+      } else {
+        message = `
 🎯 *SNIPER ALERT - ${currencyCode}*
 🏦 *Platform:* ${platformName}
 📊 New Deposit #${depositId}: ${formattedAmount} USDC
 💰 Deposit Rate: ${depositRate.toFixed(4)} ${currencyCode}/USD
-📈 Market Rate: ${marketRate.toFixed(4)} ${currencyCode}/USD  
+📈 Market Rate: ${marketRate.toFixed(4)} ${currencyCode}/USD
 🔥 ${percentageDiff.toFixed(1)}% BETTER than market!
 
 💵 *If you filled this entire order:*
@@ -1530,15 +1544,16 @@ if (interestedUsers.length > 0) {
 
 *You get ${currencyCode} at ${percentageDiff.toFixed(1)}% discount on ${platformName}!*
 `.trim();
+      }
 
       await db.logSniperAlert(chatId, depositId, currencyCode, depositRate, marketRate, percentageDiff);
-      
-const sendOptions = { 
+
+const sendOptions = {
   parse_mode: 'Markdown',
   reply_markup: {
     inline_keyboard: [[
       {
-        text: `🔗 Snipe Deposit ${depositId}`,
+        text: isOneToOne ? `⚖️ View Deposit ${depositId}` : `🔗 Snipe Deposit ${depositId}`,
         url: depositLink(depositId)
       }
     ]]
@@ -1555,7 +1570,10 @@ await postToDiscord({
   webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
   threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
   content: toDiscordMarkdown(message),
-  components: linkButton(`🔗 Snipe Deposit ${depositId}`, depositLink(depositId))
+  components: linkButton(
+    isOneToOne ? `⚖️ View Deposit ${depositId}` : `🔗 Snipe Deposit ${depositId}`,
+    depositLink(depositId)
+  )
 });
 
 
