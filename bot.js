@@ -1504,18 +1504,16 @@ if (interestedUsers.length > 0) {
   for (const chatId of interestedUsers) {
     const userThreshold = await db.getUserThreshold(chatId);
     
-    // For USD deposits: if rate is 1.0 (parity), percentageDiff is 0%
-    // Alert if percentageDiff >= threshold. For threshold <= 0%, this will alert on parity
-    // For other currencies: alert if rate is better than market by threshold amount
-    const shouldAlert = percentageDiff >= userThreshold;
-    
-    console.log(`📊 User ${chatId}: threshold=${userThreshold}%, diff=${percentageDiff.toFixed(2)}%, shouldAlert=${shouldAlert}`);
-    
-    if (shouldAlert) {
-      console.log(`🎯 SNIPER OPPORTUNITY for user ${chatId}! ${percentageDiff.toFixed(2)}% >= ${userThreshold}%`);
+    const formattedAmount = (Number(depositAmount) / 1e6).toFixed(2);
+    const isOneToOne = Math.abs(percentageDiff) < 0.1; // Within 0.1% of market rate = parity
 
-      const formattedAmount = (Number(depositAmount) / 1e6).toFixed(2);
-      const isOneToOne = Math.abs(percentageDiff) < 0.1; // Within 0.1% of market rate = parity
+    // 1:1 deposits always alert (bypass threshold), otherwise check user threshold
+    const shouldAlert = isOneToOne || percentageDiff >= userThreshold;
+
+    console.log(`📊 User ${chatId}: threshold=${userThreshold}%, diff=${percentageDiff.toFixed(2)}%, isOneToOne=${isOneToOne}, shouldAlert=${shouldAlert}`);
+
+    if (shouldAlert) {
+      console.log(`🎯 ${isOneToOne ? '1:1 DEPOSIT' : 'SNIPER OPPORTUNITY'} for user ${chatId}! diff=${percentageDiff.toFixed(2)}%`);
 
       let message;
       if (isOneToOne) {
@@ -1560,15 +1558,17 @@ const sendOptions = {
   }
 };
 
-// Send sniper messages to the sniper topic
+// 1:1 alerts go to the main deposit channels, sniper alerts go to sniper channels
 if (chatId === ZKP2P_GROUP_ID) {
-  sendOptions.message_thread_id = ZKP2P_SNIPER_TOPIC_ID;
+  sendOptions.message_thread_id = isOneToOne ? ZKP2P_TOPIC_ID : ZKP2P_SNIPER_TOPIC_ID;
 }
 
-// Mirror to Discord sniper webhook (once per alert path)
+const discordWebhook = isOneToOne ? process.env.DISCORD_ORDERS_WEBHOOK_URL : process.env.DISCORD_SNIPER_WEBHOOK_URL;
+const discordThread = isOneToOne ? (process.env.DISCORD_ORDERS_THREAD_ID || null) : (process.env.DISCORD_SNIPER_THREAD_ID || null);
+
 await postToDiscord({
-  webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
-  threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
+  webhookUrl: discordWebhook,
+  threadId: discordThread,
   content: toDiscordMarkdown(message),
   components: linkButton(
     isOneToOne ? `⚖️ View Deposit ${depositId}` : `🔗 Snipe Deposit ${depositId}`,
