@@ -15,6 +15,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const EXCHANGE_API_URL = `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/latest/USD`;
 
 const depositAmounts = new Map(); // Store deposit amounts temporarily
+const recentSniperAlerts = new Map(); // depositId -> timestamp, dedup alerts within 30s
 const intentDetails = new Map();
 const orchestratorIntentDetails = new Map(); // intentHash -> {depositId, escrow, paymentMethod, owner, to, amount, fiatCurrency, conversionRate, timestamp}
 
@@ -1443,6 +1444,14 @@ const createDepositKeyboard = (depositId) => {
 
 // Sniper logic
 async function checkSniperOpportunity(depositId, depositAmount, currencyHash, conversionRate, verifierAddress) {
+  // Dedup: skip if we already alerted this deposit in the last 30s
+  const now = Date.now();
+  const lastAlert = recentSniperAlerts.get(depositId);
+  if (lastAlert && now - lastAlert < 30000) {
+    console.log(`⏭️ Skipping duplicate sniper check for deposit ${depositId} (alerted ${((now - lastAlert) / 1000).toFixed(1)}s ago)`);
+    return;
+  }
+
   const currencyCode = currencyHashToCode[currencyHash.toLowerCase()];
   const platformName = getPlatformName(verifierAddress).toLowerCase();
 
@@ -1491,6 +1500,9 @@ async function checkSniperOpportunity(depositId, depositAmount, currencyHash, co
   console.log(`📊 Deposit rate: ${depositRate} ${currencyCode}/USD`);
   console.log(`📊 Percentage difference: ${percentageDiff.toFixed(2)}%`);
   
+// Mark this deposit as alerted to prevent duplicate notifications
+recentSniperAlerts.set(depositId, Date.now());
+
 // Get users with their custom thresholds and check each one individually
 const interestedUsers = await db.getUsersWithSniper(currencyCode, platformName);
 
@@ -2583,3 +2595,11 @@ setInterval(async () => {
     await escrowV3Provider.restart();
   }
 }, 120000); // Check every two minutes
+
+// Clean up stale sniper alert dedup entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [depositId, timestamp] of recentSniperAlerts) {
+    if (now - timestamp > 60000) recentSniperAlerts.delete(depositId);
+  }
+}, 300000);
