@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { WebSocketProvider, Interface } = require('ethers');
+const { WebSocketProvider, JsonRpcProvider, Contract, Interface } = require('ethers');
 const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -23,6 +23,14 @@ const orchestratorIntentDetails = new Map(); // intentHash -> {depositId, escrow
 // deposit ID collisions with the legacy escrow (independent ID counters)
 const escrowV2DepositAmounts = new Map(); // depositId -> amount
 const escrowV3DepositAmounts = new Map(); // depositId -> amount
+
+// Oracle adapter support for V2/V3 escrow contracts
+const baseHttpProvider = new JsonRpcProvider('https://mainnet.base.org');
+const oracleAdapterAbi = [
+  'function getRate(bytes calldata normalizedConfig) external view returns (bool valid, uint256 rate, uint256 updatedAt)'
+];
+// Cache oracle configs: "depositId-paymentMethod-currency" -> { adapter, adapterConfig, spreadBps }
+const escrowV2OracleConfigs = new Map();
 
 // Database helper functions
 class DatabaseManager {
@@ -1092,6 +1100,15 @@ const escrowV2Abi = [
   `event DepositClosed(
     uint256 depositId,
     address depositor
+  )`,
+  `event DepositOracleRateConfigSet(
+    uint256 indexed depositId,
+    bytes32 indexed paymentMethod,
+    bytes32 indexed currencyCode,
+    address adapter,
+    bytes adapterConfig,
+    int16 spreadBps,
+    uint32 maxStaleness
   )`
 ];
 
@@ -1497,6 +1514,23 @@ const createDepositKeyboard = (depositId) => {
     ]]
   };
 };
+
+// Fetch rate from oracle adapter contract
+async function getOracleRate(adapterAddress, adapterConfig) {
+  try {
+    const adapter = new Contract(adapterAddress, oracleAdapterAbi, baseHttpProvider);
+    const [valid, rate, updatedAt] = await adapter.getRate(adapterConfig);
+    if (!valid) {
+      console.log(`⚠️ Oracle adapter ${adapterAddress} returned invalid rate`);
+      return null;
+    }
+    console.log(`🔮 Oracle rate from ${adapterAddress}: ${rate} (updatedAt: ${updatedAt})`);
+    return rate; // Already in 1e18 precision
+  } catch (err) {
+    console.error(`❌ Failed to fetch oracle rate from ${adapterAddress}:`, err.message);
+    return null;
+  }
+}
 
 // Sniper logic
 async function checkSniperOpportunity(depositId, depositAmount, currencyHash, conversionRate, verifierAddress) {
@@ -2318,7 +2352,7 @@ const handleEscrowV3Event = async (log) => {
       const id = Number(depositId);
       const fiatCode = getFiatCode(currency);
 
-      console.log(`🎯 V3 Escrow DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}`);
+      console.log(`🎯 V3 Escrow DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}, minConversionRate: ${minConversionRate}`);
 
       // Read from in-memory cache (not DB) to avoid deposit ID collision
       const depositAmount = escrowV3DepositAmounts.get(id) || 0;
@@ -2326,6 +2360,12 @@ const handleEscrowV3Event = async (log) => {
 
       if (!depositAmount || Number(depositAmount) <= 0) {
         console.log(`⚠️ Deposit amount not available yet for deposit ${id}, will check on rate updates`);
+        return;
+      }
+
+      // Skip oracle-priced deposits (V3 doesn't support oracle config events)
+      if (Number(minConversionRate) < 1e10) {
+        console.log(`⚠️ V3 deposit ${id} has very low minConversionRate (${minConversionRate}), likely oracle-priced - skipping`);
         return;
       }
 
@@ -2385,13 +2425,20 @@ const handleEscrowV2Event = async (log) => {
       const { depositId, paymentMethod, currency, minConversionRate } = parsed.args;
       const id = Number(depositId);
       const fiatCode = getFiatCode(currency);
-      console.log(`🎯 EscrowV2 DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}`);
+      console.log(`🎯 EscrowV2 DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}, minConversionRate: ${minConversionRate}`);
 
       const depositAmount = escrowV2DepositAmounts.get(id) || 0;
       console.log(`💰 Retrieved deposit amount: ${depositAmount} (${formatUSDC(depositAmount)} USDC)`);
 
       if (!depositAmount || Number(depositAmount) <= 0) {
         console.log(`⚠️ Deposit amount not available yet for deposit ${id}`);
+        return;
+      }
+
+      // If minConversionRate is very low, this deposit uses oracle pricing.
+      // The actual rate will come from the DepositOracleRateConfigSet event.
+      if (Number(minConversionRate) < 1e10) {
+        console.log(`⏳ Deposit ${id} uses oracle pricing (minConversionRate=${minConversionRate}), waiting for oracle config event`);
         return;
       }
 
@@ -2410,6 +2457,39 @@ const handleEscrowV2Event = async (log) => {
       if (depositAmount > 0) {
         await checkSniperOpportunity(id, depositAmount, currency, newMinConversionRate, paymentMethod);
       }
+      return;
+    }
+
+    if (name === 'DepositOracleRateConfigSet') {
+      const { depositId, paymentMethod, currencyCode, adapter, adapterConfig, spreadBps } = parsed.args;
+      const id = Number(depositId);
+      const spread = Number(spreadBps);
+      const fiatCode = getFiatCode(currencyCode);
+      console.log(`🔮 EscrowV2 DepositOracleRateConfigSet: deposit ${id}, ${fiatCode}, adapter: ${adapter}, spread: ${spread}bps`);
+
+      // Store oracle config for this deposit
+      const configKey = `${id}-${paymentMethod}-${currencyCode}`;
+      escrowV2OracleConfigs.set(configKey, { adapter, adapterConfig, spreadBps: spread });
+
+      const depositAmount = escrowV2DepositAmounts.get(id) || 0;
+      if (!depositAmount || depositAmount <= 0) {
+        console.log(`⚠️ Deposit amount not available for oracle deposit ${id}`);
+        return;
+      }
+
+      // Fetch the actual rate from the oracle adapter
+      const oracleRate = await getOracleRate(adapter, adapterConfig);
+      if (!oracleRate) {
+        console.log(`⚠️ Could not fetch oracle rate for deposit ${id}, skipping sniper check`);
+        return;
+      }
+
+      // Apply spread: effectiveRate = oracleRate * (10000 + spreadBps) / 10000
+      const effectiveRate = (BigInt(oracleRate) * BigInt(10000 + spread)) / 10000n;
+      console.log(`📊 Oracle effective rate for deposit ${id}: ${effectiveRate} (oracle: ${oracleRate}, spread: ${spread}bps)`);
+
+      // Pass effective rate to sniper check (already in 1e18 format)
+      await checkSniperOpportunity(id, depositAmount, currencyCode, effectiveRate, paymentMethod);
       return;
     }
 

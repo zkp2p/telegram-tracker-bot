@@ -31,7 +31,8 @@ const escrowV2Abi = [
   `event DepositMinConversionRateUpdated(uint256 indexed depositId, bytes32 indexed paymentMethod, bytes32 indexed currency, uint256 newMinConversionRate)`,
   `event DepositFundsAdded(uint256 indexed depositId, address indexed depositor, uint256 amount)`,
   `event DepositWithdrawn(uint256 indexed depositId, address indexed depositor, uint256 amount)`,
-  `event DepositClosed(uint256 depositId, address depositor)`
+  `event DepositClosed(uint256 depositId, address depositor)`,
+  `event DepositOracleRateConfigSet(uint256 indexed depositId, bytes32 indexed paymentMethod, bytes32 indexed currencyCode, address adapter, bytes adapterConfig, int16 spreadBps, uint32 maxStaleness)`
 ];
 
 const orchestratorAbi = [
@@ -106,13 +107,14 @@ describe('ABI Parsing', () => {
 
   it('should parse EscrowV2 ABI (extends V3 with extra events)', () => {
     const iface = new Interface(escrowV2Abi);
-    assert.equal(iface.fragments.length, 7); // 3 from v3 + 4 new
+    assert.equal(iface.fragments.length, 8); // 3 from v3 + 5 new
     const names = iface.fragments.map(f => f.name);
     assert.ok(names.includes('DepositReceived'));
     assert.ok(names.includes('DepositCurrencyAdded'));
     assert.ok(names.includes('DepositMinConversionRateUpdated'));
     assert.ok(names.includes('DepositFundsAdded'));
     assert.ok(names.includes('DepositClosed'));
+    assert.ok(names.includes('DepositOracleRateConfigSet'));
   });
 
   it('should parse OrchestratorV2 ABI (extends v1 with fee events)', () => {
@@ -397,5 +399,83 @@ describe('Concurrent Provider Simulation', () => {
     const currency = '0xc4ae21aac0c6549d71dd96035b7e0bdb6c79ebdba8891b666115bc976d16a29e';
     const legacyLog = encodeLog(legacyIface, 'DepositCurrencyAdded', [1n, verifier, currency], [1000000000000000000n]);
     assert.equal(v2Iface.parseLog(legacyLog), null);
+  });
+});
+
+
+describe('Oracle Rate Config Support', () => {
+  it('should parse DepositOracleRateConfigSet event', () => {
+    const iface = new Interface(escrowV2Abi);
+    const paymentMethod = '0x617f88ab82b5c1b014c539f7e75121427f0bb50a4c58b187a238531e7d58605d';
+    const currency = '0xfff16d60be267153303bbfa66e593fb8d06e24ea5ef24b6acca5224c2ca6b907';
+    const adapter = '0x53881a928abD61C095e5f30b63bc554872C3b2f1';
+    const adapterConfig = '0xc91d87e81fab8f93699ecf7ee9b44d11e1d53f0f0801';
+    const log = encodeLog(iface, 'DepositOracleRateConfigSet',
+      [34n, paymentMethod, currency],
+      [adapter, adapterConfig, 0, 86400]
+    );
+    const parsed = iface.parseLog(log);
+    assert.equal(parsed.name, 'DepositOracleRateConfigSet');
+    assert.equal(Number(parsed.args.depositId), 34);
+    assert.equal(parsed.args.adapter.toLowerCase(), adapter.toLowerCase());
+    assert.equal(Number(parsed.args.spreadBps), 0);
+    assert.equal(Number(parsed.args.maxStaleness), 86400);
+  });
+
+  it('should parse DepositOracleRateConfigSet with negative spread', () => {
+    const iface = new Interface(escrowV2Abi);
+    const paymentMethod = '0x617f88ab82b5c1b014c539f7e75121427f0bb50a4c58b187a238531e7d58605d';
+    const currency = '0xfff16d60be267153303bbfa66e593fb8d06e24ea5ef24b6acca5224c2ca6b907';
+    const adapter = '0x53881a928abD61C095e5f30b63bc554872C3b2f1';
+    const log = encodeLog(iface, 'DepositOracleRateConfigSet',
+      [10n, paymentMethod, currency],
+      [adapter, '0x00', -50, 3600]
+    );
+    const parsed = iface.parseLog(log);
+    assert.equal(Number(parsed.args.spreadBps), -50);
+  });
+
+  it('should correctly compute effective rate with zero spread', () => {
+    const oracleRate = 867174831117701640n; // ~0.867 EUR/USD in 1e18
+    const spreadBps = 0;
+    const effectiveRate = (oracleRate * BigInt(10000 + spreadBps)) / 10000n;
+    assert.equal(effectiveRate, oracleRate);
+  });
+
+  it('should correctly compute effective rate with positive spread', () => {
+    const oracleRate = 1000000000000000000n; // 1.0 in 1e18
+    const spreadBps = 100; // +1%
+    const effectiveRate = (oracleRate * BigInt(10000 + spreadBps)) / 10000n;
+    // 1.0 * 10100/10000 = 1.01
+    assert.equal(effectiveRate, 1010000000000000000n);
+  });
+
+  it('should correctly compute effective rate with negative spread', () => {
+    const oracleRate = 1000000000000000000n; // 1.0 in 1e18
+    const spreadBps = -50; // -0.5%
+    const effectiveRate = (oracleRate * BigInt(10000 + spreadBps)) / 10000n;
+    // 1.0 * 9950/10000 = 0.995
+    assert.equal(effectiveRate, 995000000000000000n);
+  });
+
+  it('should skip sniper check for low minConversionRate (oracle-priced deposit)', () => {
+    // When minConversionRate < 1e10, the deposit uses oracle pricing
+    const lowRate = 1n;
+    assert.ok(Number(lowRate) < 1e10, 'minConversionRate=1 should be detected as oracle pricing');
+
+    // Normal wei-scaled rate should NOT be skipped
+    const normalRate = 920000000000000000n; // 0.92 in 1e18
+    assert.ok(Number(normalRate) >= 1e10, 'normal rate should not be detected as oracle pricing');
+  });
+
+  it('should store and retrieve oracle configs by composite key', () => {
+    const configs = new Map();
+    const depositId = 34;
+    const paymentMethod = '0x617f88ab82b5c1b014c539f7e75121427f0bb50a4c58b187a238531e7d58605d';
+    const currency = '0xfff16d60be267153303bbfa66e593fb8d06e24ea5ef24b6acca5224c2ca6b907';
+    const key = `${depositId}-${paymentMethod}-${currency}`;
+    configs.set(key, { adapter: '0x53881a928abD61C095e5f30b63bc554872C3b2f1', spreadBps: 0 });
+    assert.ok(configs.has(key));
+    assert.equal(configs.get(key).spreadBps, 0);
   });
 });
