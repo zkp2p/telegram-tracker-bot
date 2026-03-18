@@ -1534,9 +1534,10 @@ async function getOracleRate(adapterAddress, adapterConfig) {
 
 // Sniper logic
 async function checkSniperOpportunity(depositId, depositAmount, currencyHash, conversionRate, verifierAddress) {
-  // Dedup: skip if we already alerted this deposit in the last 30s
+  // Dedup: skip if we already alerted this deposit+currency in the last 30s
   const now = Date.now();
-  const lastAlert = recentSniperAlerts.get(depositId);
+  const dedupKey = `${depositId}-${currencyHash}`;
+  const lastAlert = recentSniperAlerts.get(dedupKey);
   if (lastAlert && now - lastAlert < 30000) {
     console.log(`⏭️ Skipping duplicate sniper check for deposit ${depositId} (alerted ${((now - lastAlert) / 1000).toFixed(1)}s ago)`);
     return;
@@ -1590,8 +1591,8 @@ async function checkSniperOpportunity(depositId, depositAmount, currencyHash, co
   console.log(`📊 Deposit rate: ${depositRate} ${currencyCode}/USD`);
   console.log(`📊 Percentage difference: ${percentageDiff.toFixed(2)}%`);
   
-// Mark this deposit as alerted to prevent duplicate notifications
-recentSniperAlerts.set(depositId, Date.now());
+// Mark this deposit+currency as alerted to prevent duplicate notifications
+recentSniperAlerts.set(dedupKey, Date.now());
 
 // Get users with their custom thresholds and check each one individually
 const interestedUsers = await db.getUsersWithSniper(currencyCode, platformName);
