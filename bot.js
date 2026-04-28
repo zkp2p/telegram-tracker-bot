@@ -730,10 +730,11 @@ class ResilientWebSocketProvider {
         this.provider.removeAllListeners();
         
         // Close WebSocket connection if it exists
-        if (this.provider._websocket) {
-          this.provider._websocket.removeAllListeners();
-          if (this.provider._websocket.readyState === 1) { // OPEN
-            this.provider._websocket.close(1000, 'Normal closure'); // Proper close code
+        const wsForClose = this._ws;
+        if (wsForClose) {
+          wsForClose.removeAllListeners();
+          if (wsForClose.readyState === 1) { // OPEN
+            wsForClose.close(1000, 'Normal closure'); // Proper close code
           }
         }
         
@@ -751,9 +752,10 @@ class ResilientWebSocketProvider {
 
   setupEventListeners() {
     if (!this.provider || this.isDestroyed) return;
-    
-    if (this.provider._websocket) {
-      this.provider._websocket.on('close', (code, reason) => {
+
+    const ws = this._ws;
+    if (ws) {
+      ws.on('close', (code, reason) => {
         console.log(`🔌 WebSocket closed: ${code} - ${reason}`);
         this.stopKeepAlive();
         if (!this.isDestroyed) {
@@ -765,8 +767,8 @@ class ResilientWebSocketProvider {
           }, 2000);
         }
       });
-  
-      this.provider._websocket.on('error', (error) => {
+
+      ws.on('error', (error) => {
         console.error('❌ WebSocket error:', error.message);
         this.stopKeepAlive();
         if (!this.isDestroyed) {
@@ -775,19 +777,19 @@ class ResilientWebSocketProvider {
       });
 
       // Enhanced ping/pong handling
-      this.provider._websocket.on('ping', (data) => {
+      ws.on('ping', (data) => {
         console.log('🏓 WebSocket ping received');
         this.lastActivityTime = Date.now();
-        this.provider._websocket.pong(data); // Respond to ping
+        ws.pong(data); // Respond to ping
       });
 
-      this.provider._websocket.on('pong', () => {
+      ws.on('pong', () => {
         console.log('🏓 WebSocket pong received');
         this.lastActivityTime = Date.now();
       });
 
       // Track any message activity
-      this.provider._websocket.on('message', () => {
+      ws.on('message', () => {
         this.lastActivityTime = Date.now();
       });
     }
@@ -806,9 +808,10 @@ class ResilientWebSocketProvider {
     
     // Send ping every 30 seconds to keep connection alive
     this.keepAliveTimer = setInterval(() => {
-      if (this.provider && this.provider._websocket && this.provider._websocket.readyState === 1) {
+      const ws = this._ws;
+      if (ws && ws.readyState === 1) {
         try {
-          this.provider._websocket.ping();
+          ws.ping();
           console.log('🏓 Sent keep-alive ping');
           
           // Check if we haven't received any activity in 90 seconds
@@ -921,11 +924,20 @@ class ResilientWebSocketProvider {
     return this.provider;
   }
 
+  get _ws() {
+    try {
+      return this.provider?.websocket || null;
+    } catch {
+      return null;
+    }
+  }
+
   get isConnected() {
-    return this.provider && 
-           this.provider._websocket && 
-           this.provider._websocket.readyState === 1 && // WebSocket.OPEN
-           (Date.now() - this.lastActivityTime) < 120000; // Active within 2 minutes
+    const ws = this._ws;
+    return !!(this.provider &&
+           ws &&
+           ws.readyState === 1 && // WebSocket.OPEN
+           (Date.now() - this.lastActivityTime) < 120000); // Active within 2 minutes
   }
 }
 
