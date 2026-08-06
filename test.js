@@ -374,18 +374,22 @@ describe('Human-readable alerts', () => {
         }]]
       }
     );
-    assert.deepEqual(createPeerDepositsKeyboard(), {
+    assert.deepEqual(createPeerDepositsKeyboard(CONTRACT_ADDRESSES.escrowV2, 17), {
       inline_keyboard: [[{
         text: 'View on Peer',
-        url: 'https://app.peer.xyz/deposits'
+        url: `https://app.peer.xyz/deposit/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}/17`
       }]]
     });
-    assert.deepEqual(createTakeOnWebKeyboard(), {
+    assert.deepEqual(createTakeOnWebKeyboard(CONTRACT_ADDRESSES.escrowV2, 17), {
       inline_keyboard: [[{
         text: 'Take on web',
-        url: 'https://app.peer.xyz/deposits'
+        url: `https://app.peer.xyz/deposit/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}/17`
       }]]
     });
+    assert.equal(
+      createPeerDepositsKeyboard().inline_keyboard[0][0].url,
+      'https://app.peer.xyz/deposits'
+    );
   });
 });
 

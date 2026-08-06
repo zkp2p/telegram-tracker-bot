@@ -769,7 +769,7 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard()
+      reply_markup: createPeerDepositsKeyboard(escrowContractAddress, depositId)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -813,7 +813,7 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard()
+      reply_markup: createPeerDepositsKeyboard(escrowContractAddress, depositId)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -871,7 +871,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard()
+      reply_markup: createPeerDepositsKeyboard(storedDetails.escrow, depositId)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -924,7 +924,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard()
+      reply_markup: createPeerDepositsKeyboard(storedDetails.escrow, depositId)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -1102,7 +1102,7 @@ if (interestedUsers.length > 0) {
 const sendOptions = {
   parse_mode: 'Markdown',
   disable_web_page_preview: true,
-  reply_markup: createTakeOnWebKeyboard()
+  reply_markup: createTakeOnWebKeyboard(escrowAddress, depositId)
 };
 
 // 1:1 alerts go to the main deposit channels, sniper alerts go to sniper channels
@@ -1516,7 +1516,7 @@ const handleContractEvent = async (log) => {
         const sendOptions = { 
           parse_mode: 'Markdown', 
           disable_web_page_preview: true,
-          reply_markup: createPeerDepositsKeyboard()
+          reply_markup: createPeerDepositsKeyboard(escrowContractAddress, id)
         };
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -2063,7 +2063,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           const sendOptions = {
             parse_mode: 'Markdown',
             disable_web_page_preview: true,
-            reply_markup: createPeerDepositsKeyboard()
+            reply_markup: createPeerDepositsKeyboard(escrow, id)
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
           await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');

@@ -1,5 +1,6 @@
 const PEERLYTICS_BASE_URL = 'https://peerlytics.xyz';
-const PEER_DEPOSITS_URL = 'https://app.peer.xyz/deposits';
+const PEER_APP_BASE_URL = 'https://app.peer.xyz';
+const PEER_DEPOSITS_URL = `${PEER_APP_BASE_URL}/deposits`;
 const MOBILE_ONBOARD_URL = 'https://mobile.zkp2p.xyz/onboard';
 
 const CURRENCY_EMOJIS = Object.freeze({
@@ -153,6 +154,17 @@ function peerlyticsDepositUrl(escrowAddress, depositId) {
     : `${PEERLYTICS_BASE_URL}/explorer`;
 }
 
+function peerDepositUrl(escrowAddress, depositId) {
+  const address = String(escrowAddress || '').trim().toLowerCase();
+  const id = String(depositId ?? '').trim();
+
+  if (!/^0x[0-9a-f]{40}$/.test(address) || !/^\d+$/.test(id)) {
+    return PEER_DEPOSITS_URL;
+  }
+
+  return `${PEER_APP_BASE_URL}/deposit/${encodeURIComponent(address)}/${encodeURIComponent(id)}`;
+}
+
 function createPeerlyticsKeyboard(url) {
   return {
     inline_keyboard: [[{
@@ -162,20 +174,20 @@ function createPeerlyticsKeyboard(url) {
   };
 }
 
-function createPeerDepositsKeyboard() {
+function createPeerDepositsKeyboard(escrowAddress, depositId) {
   return {
     inline_keyboard: [[{
       text: 'View on Peer',
-      url: PEER_DEPOSITS_URL
+      url: peerDepositUrl(escrowAddress, depositId)
     }]]
   };
 }
 
-function createTakeOnWebKeyboard() {
+function createTakeOnWebKeyboard(escrowAddress, depositId) {
   return {
     inline_keyboard: [[{
       text: 'Take on web',
-      url: PEER_DEPOSITS_URL
+      url: peerDepositUrl(escrowAddress, depositId)
     }]]
   };
 }
@@ -284,6 +296,7 @@ module.exports = {
   formatPlatform,
   formatUSDCAmount,
   getCurrencyEmoji,
+  peerDepositUrl,
   peerlyticsDepositUrl,
   peerlyticsIntentUrl
 };
