@@ -1,4 +1,40 @@
 const PEERLYTICS_BASE_URL = 'https://peerlytics.xyz';
+const PEER_DEPOSITS_URL = 'https://app.peer.xyz/deposits';
+
+const CURRENCY_EMOJIS = Object.freeze({
+  AED: '🇦🇪',
+  ARS: '🇦🇷',
+  AUD: '🇦🇺',
+  CAD: '🇨🇦',
+  CHF: '🇨🇭',
+  CNY: '🇨🇳',
+  CZK: '🇨🇿',
+  DKK: '🇩🇰',
+  EUR: '🇪🇺',
+  GBP: '🇬🇧',
+  HKD: '🇭🇰',
+  HUF: '🇭🇺',
+  IDR: '🇮🇩',
+  ILS: '🇮🇱',
+  INR: '🇮🇳',
+  JPY: '🇯🇵',
+  KES: '🇰🇪',
+  MXN: '🇲🇽',
+  MYR: '🇲🇾',
+  NOK: '🇳🇴',
+  NZD: '🇳🇿',
+  PHP: '🇵🇭',
+  PLN: '🇵🇱',
+  RON: '🇷🇴',
+  SAR: '🇸🇦',
+  SEK: '🇸🇪',
+  SGD: '🇸🇬',
+  THB: '🇹🇭',
+  TRY: '🇹🇷',
+  USD: '🇺🇸',
+  VND: '🇻🇳',
+  ZAR: '🇿🇦'
+});
 
 const PLATFORM_LABELS = Object.freeze({
   alipay: 'Alipay',
@@ -22,6 +58,10 @@ function formatPlatform(platform) {
     .filter(Boolean)
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function getCurrencyEmoji(currencyCode) {
+  return CURRENCY_EMOJIS[String(currencyCode || '').trim().toUpperCase()] || '💱';
 }
 
 function formatUSDCAmount(amount) {
@@ -106,6 +146,15 @@ function createPeerlyticsKeyboard(url) {
   };
 }
 
+function createPeerDepositsKeyboard() {
+  return {
+    inline_keyboard: [[{
+      text: 'View on Peer',
+      url: PEER_DEPOSITS_URL
+    }]]
+  };
+}
+
 function buildOrderCreatedMessage({
   platform,
   amount,
@@ -116,8 +165,10 @@ function buildOrderCreatedMessage({
   return [
     '🟡 *Order created*',
     '',
-    `A ${formatPlatform(platform)} order was created to pay *${formatFiatAmount(amount, conversionRate, currencyCode)}* for *${formatUSDCAmount(amount)}*.`,
-    `*Created:* ${formatAlertTime(timestamp)}`
+    `*Platform:* ${formatPlatform(platform)}`,
+    `*From:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${getCurrencyEmoji(currencyCode)}`,
+    `*To:* ${formatUSDCAmount(amount)}`,
+    `*At:* ${formatAlertTime(timestamp)}`
   ].join('\n');
 }
 
@@ -167,14 +218,17 @@ function buildSniperMessage({
 }
 
 module.exports = {
+  PEER_DEPOSITS_URL,
   buildOrderCreatedMessage,
   buildOrderStatusMessage,
   buildSniperMessage,
+  createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
   formatAlertTime,
   formatFiatAmount,
   formatPlatform,
   formatUSDCAmount,
+  getCurrencyEmoji,
   peerlyticsDepositUrl,
   peerlyticsIntentUrl
 };

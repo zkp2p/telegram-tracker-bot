@@ -20,6 +20,7 @@ const {
   buildOrderCreatedMessage,
   buildOrderStatusMessage,
   buildSniperMessage,
+  createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
   formatPlatform,
   peerlyticsDepositUrl,
@@ -213,7 +214,7 @@ describe('Human-readable alerts', () => {
 
   it('summarizes a created order without protocol internals', () => {
     const message = buildOrderCreatedMessage({
-      platform: 'venmo',
+      platform: 'wise',
       amount: 100000000n,
       conversionRate: 950000000000000000n,
       currencyCode: 'USD',
@@ -223,8 +224,10 @@ describe('Human-readable alerts', () => {
     assert.equal(message, [
       '🟡 *Order created*',
       '',
-      'A Venmo order was created to pay *$95.00 USD* for *100.00 USDC*.',
-      '*Created:* Aug 6, 2026 at 6:42 PM UTC'
+      '*Platform:* Wise',
+      '*From:* $95.00 USD 🇺🇸',
+      '*To:* 100.00 USDC',
+      '*At:* Aug 6, 2026 at 6:42 PM UTC'
     ].join('\n'));
     for (const noisyLabel of ['Deposit ID', 'Order ID', 'Owner', 'Block', 'BaseScan']) {
       assert.equal(message.includes(noisyLabel), false);
@@ -276,7 +279,7 @@ describe('Human-readable alerts', () => {
     assert.equal(formatPlatform('Unknown (0x1234...5678)'), 'Payment app');
   });
 
-  it('builds canonical Peerlytics links and buttons', () => {
+  it('builds canonical explorer and Peer action links', () => {
     assert.equal(
       peerlyticsIntentUrl(intentHash),
       `https://peerlytics.xyz/explorer/intent/${intentHash.toLowerCase()}`
@@ -294,6 +297,12 @@ describe('Human-readable alerts', () => {
         }]]
       }
     );
+    assert.deepEqual(createPeerDepositsKeyboard(), {
+      inline_keyboard: [[{
+        text: 'View on Peer',
+        url: 'https://app.peer.xyz/deposits'
+      }]]
+    });
   });
 });
 

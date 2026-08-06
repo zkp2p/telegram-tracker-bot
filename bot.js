@@ -13,9 +13,11 @@ const {
   orchestratorAbi
 } = require('./src/contracts');
 const {
+  PEER_DEPOSITS_URL,
   buildOrderCreatedMessage,
   buildOrderStatusMessage,
   buildSniperMessage,
+  createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
   peerlyticsDepositUrl,
   peerlyticsIntentUrl
@@ -1495,13 +1497,12 @@ const handleContractEvent = async (log) => {
         currencyCode: fiatCode,
         timestamp
       });
-      const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
       await postToDiscord({
         webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
         threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
         content: toDiscordMarkdown(message),
-        components: linkButton('View on Peerlytics', peerlyticsUrl)
+        components: linkButton('View on Peer', PEER_DEPOSITS_URL)
       });
 
 
@@ -1512,7 +1513,7 @@ const handleContractEvent = async (log) => {
         const sendOptions = { 
           parse_mode: 'Markdown', 
           disable_web_page_preview: true,
-          reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+          reply_markup: createPeerDepositsKeyboard()
         };
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -2045,13 +2046,12 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           currencyCode: fiatCode,
           timestamp
         });
-        const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
         await postToDiscord({
           webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
           threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
           content: toDiscordMarkdown(message),
-          components: linkButton('View on Peerlytics', peerlyticsUrl)
+          components: linkButton('View on Peer', PEER_DEPOSITS_URL)
         });
 
         await Promise.all(interestedUsers.map(async (chatId) => {
@@ -2060,7 +2060,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           const sendOptions = {
             parse_mode: 'Markdown',
             disable_web_page_preview: true,
-            reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+            reply_markup: createPeerDepositsKeyboard()
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
           await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');
