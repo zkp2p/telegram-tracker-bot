@@ -22,6 +22,7 @@ const {
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
+  createTakeOnWebKeyboard,
   formatPlatform,
   peerlyticsDepositUrl,
   peerlyticsIntentUrl
@@ -236,20 +237,18 @@ describe('Human-readable alerts', () => {
 
   it('summarizes snipe and 1:1 opportunities consistently', () => {
     const snipe = buildSniperMessage({
-      platform: 'venmo',
       amount: 100000000n,
       conversionRate: 950000000000000000n,
       currencyCode: 'USD',
-      percentageDiff: 5,
+      marketRate: 1,
       isOneToOne: false,
       timestamp
     });
     const parity = buildSniperMessage({
-      platform: 'cashapp',
       amount: 100000000n,
       conversionRate: 1000000000000000000n,
       currencyCode: 'USD',
-      percentageDiff: 0,
+      marketRate: 1,
       isOneToOne: true,
       timestamp
     });
@@ -257,10 +256,39 @@ describe('Human-readable alerts', () => {
     assert.equal(snipe, [
       '🎯 *Snipe opportunity*',
       '',
-      'Pay *$95.00 USD* with Venmo for *100.00 USDC* at *5.0% below market*.',
-      '*Found:* Aug 6, 2026 at 6:42 PM UTC'
+      '*Pay:* $95.00 USD 🇺🇸',
+      '*Receive:* 100.00 USDC (= ~$100.00 USD 🇺🇸)',
+      '*Profit:* ~$5.00 USD',
+      '*Found:* Aug 6, 2026 at 6:42 PM UTC',
+      '',
+      '[Download the mobile app](https://mobile.zkp2p.xyz/onboard) to receive faster notifications and snipe on the go.'
     ].join('\n'));
-    assert.match(parity, /Pay \*\$100\.00 USD\* with Cash App for \*100\.00 USDC\* at the market rate\./);
+    assert.match(parity, /\*Pay:\* \$100\.00 USD 🇺🇸/);
+    assert.equal(parity.includes('*Profit:*'), false);
+  });
+
+  it('only shows snipe profit when its USD value exceeds one dollar', () => {
+    const exactlyOneDollar = buildSniperMessage({
+      amount: 100000000n,
+      conversionRate: 990000000000000000n,
+      marketRate: 1,
+      currencyCode: 'USD',
+      isOneToOne: false,
+      timestamp
+    });
+    const fiveDollarEuroProfit = buildSniperMessage({
+      amount: 100000000n,
+      conversionRate: 855000000000000000n,
+      marketRate: 0.9,
+      currencyCode: 'EUR',
+      isOneToOne: false,
+      timestamp
+    });
+
+    assert.equal(exactlyOneDollar.includes('*Profit:*'), false);
+    assert.match(fiveDollarEuroProfit, /\*Pay:\* €85\.50 EUR 🇪🇺/);
+    assert.match(fiveDollarEuroProfit, /\*Receive:\* 100\.00 USDC \(= ~€90\.00 EUR 🇪🇺\)/);
+    assert.match(fiveDollarEuroProfit, /\*Profit:\* ~\$5\.00 USD/);
   });
 
   it('keeps lifecycle updates concise and human-readable', () => {
@@ -300,6 +328,12 @@ describe('Human-readable alerts', () => {
     assert.deepEqual(createPeerDepositsKeyboard(), {
       inline_keyboard: [[{
         text: 'View on Peer',
+        url: 'https://app.peer.xyz/deposits'
+      }]]
+    });
+    assert.deepEqual(createTakeOnWebKeyboard(), {
+      inline_keyboard: [[{
+        text: 'Take on web',
         url: 'https://app.peer.xyz/deposits'
       }]]
     });

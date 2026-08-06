@@ -1,5 +1,6 @@
 const PEERLYTICS_BASE_URL = 'https://peerlytics.xyz';
 const PEER_DEPOSITS_URL = 'https://app.peer.xyz/deposits';
+const MOBILE_ONBOARD_URL = 'https://mobile.zkp2p.xyz/onboard';
 
 const CURRENCY_EMOJIS = Object.freeze({
   AED: '🇦🇪',
@@ -72,9 +73,8 @@ function formatUSDCAmount(amount) {
   })} USDC`;
 }
 
-function formatFiatAmount(usdcAmount, conversionRate, currencyCode) {
+function formatFiatValue(value, currencyCode) {
   const code = String(currencyCode || '').trim().toUpperCase();
-  const value = (Number(usdcAmount) / 1e6) * (Number(conversionRate) / 1e18);
 
   if (!Number.isFinite(value)) return `Unknown ${code}`.trim();
 
@@ -93,6 +93,11 @@ function formatFiatAmount(usdcAmount, conversionRate, currencyCode) {
       maximumFractionDigits: 2
     })} ${code}`.trim();
   }
+}
+
+function formatFiatAmount(usdcAmount, conversionRate, currencyCode) {
+  const value = (Number(usdcAmount) / 1e6) * (Number(conversionRate) / 1e18);
+  return formatFiatValue(value, currencyCode);
 }
 
 function formatAlertTime(timestamp) {
@@ -155,6 +160,15 @@ function createPeerDepositsKeyboard() {
   };
 }
 
+function createTakeOnWebKeyboard() {
+  return {
+    inline_keyboard: [[{
+      text: 'Take on web',
+      url: PEER_DEPOSITS_URL
+    }]]
+  };
+}
+
 function buildOrderCreatedMessage({
   platform,
   amount,
@@ -196,36 +210,55 @@ function buildOrderStatusMessage({
 }
 
 function buildSniperMessage({
-  platform,
   amount,
   conversionRate,
+  marketRate,
   currencyCode,
-  percentageDiff,
   isOneToOne,
   timestamp
 }) {
   const headline = isOneToOne ? '⚖️ *1:1 opportunity*' : '🎯 *Snipe opportunity*';
-  const pricing = isOneToOne
-    ? 'at the market rate'
-    : `at *${Number(percentageDiff).toFixed(1)}% below market*`;
+  const usdcValue = Number(amount) / 1e6;
+  const depositRate = Number(conversionRate) / 1e18;
+  const numericMarketRate = Number(marketRate);
+  const marketValue = usdcValue * numericMarketRate;
+  const profitUsd = numericMarketRate > 0
+    ? (marketValue - (usdcValue * depositRate)) / numericMarketRate
+    : 0;
+  const currencyEmoji = getCurrencyEmoji(currencyCode);
 
-  return [
+  const lines = [
     headline,
     '',
-    `Pay *${formatFiatAmount(amount, conversionRate, currencyCode)}* with ${formatPlatform(platform)} for *${formatUSDCAmount(amount)}* ${pricing}.`,
-    `*Found:* ${formatAlertTime(timestamp)}`
-  ].join('\n');
+    `*Pay:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${currencyEmoji}`,
+    `*Receive:* ${formatUSDCAmount(amount)} (= ~${formatFiatValue(marketValue, currencyCode)} ${currencyEmoji})`
+  ];
+
+  if (profitUsd > 1) {
+    lines.push(`*Profit:* ~${formatFiatValue(profitUsd, 'USD')}`);
+  }
+
+  lines.push(
+    `*Found:* ${formatAlertTime(timestamp)}`,
+    '',
+    `[Download the mobile app](${MOBILE_ONBOARD_URL}) to receive faster notifications and snipe on the go.`
+  );
+
+  return lines.join('\n');
 }
 
 module.exports = {
+  MOBILE_ONBOARD_URL,
   PEER_DEPOSITS_URL,
   buildOrderCreatedMessage,
   buildOrderStatusMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
+  createTakeOnWebKeyboard,
   formatAlertTime,
   formatFiatAmount,
+  formatFiatValue,
   formatPlatform,
   formatUSDCAmount,
   getCurrencyEmoji,
