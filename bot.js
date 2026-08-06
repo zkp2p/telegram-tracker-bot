@@ -1,7 +1,18 @@
 require('dotenv').config();
-const { WebSocketProvider, JsonRpcProvider, Contract, Interface } = require('ethers');
-const TelegramBot = require('node-telegram-bot-api');
+const { JsonRpcProvider, Contract, Interface } = require('ethers');
+const { TelegramBot } = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
+const {
+  CONTRACT_ADDRESSES,
+  SUPPORTED_SNIPER_PLATFORMS,
+  escrowAbi,
+  escrowV2Abi,
+  getPlatformName,
+  legacyEscrowAbi,
+  modernOrchestratorAbi,
+  orchestratorAbi
+} = require('./src/contracts');
+const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 
 // Supabase setup
 const supabase = createClient(
@@ -646,501 +657,20 @@ async function getARSRate() {
 }
 
 
-// Enhanced WebSocket Provider with better connection stability
-class ResilientWebSocketProvider {
-  constructor(url, contractAddress, eventHandler) {
-    this.url = url;
-    this.contractAddress = contractAddress;
-    this.eventHandler = eventHandler;
-    this.reconnectDelay = 1000;
-    this.maxReconnectDelay = 30000;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 50;
-    this.isConnecting = false;
-    this.isDestroyed = false;
-    this.provider = null;
-    this.reconnectTimer = null;
-    this.keepAliveTimer = null; // Add keep-alive timer
-    this.lastActivityTime = Date.now();
-    
-    this.connect();
-  }
+const {
+  legacyEscrow: escrowContractAddress,
+  escrow: escrowV3ContractAddress,
+  escrowV2: escrowV2ContractAddress,
+  orchestrator: orchestratorContractAddress,
+  orchestratorV2: orchestratorV2ContractAddress,
+  orchestratorV3: orchestratorV3ContractAddress
+} = CONTRACT_ADDRESSES;
 
-  async connect() {
-    if (this.isConnecting || this.isDestroyed) return;
-    this.isConnecting = true;
-
-    try {
-      console.log(`🔌 Attempting WebSocket connection (attempt ${this.reconnectAttempts + 1})`);
-      
-      // Properly cleanup existing provider
-      if (this.provider) {
-        await this.cleanup();
-      }
-
-      // Add connection options for better stability
-      this.provider = new WebSocketProvider(this.url, undefined, {
-        // Add connection options
-        reconnectInterval: 5000,
-        maxReconnectInterval: 30000,
-        reconnectDecay: 1.5,
-        timeoutInterval: 10000,
-        maxReconnectAttempts: null, // We handle this ourselves
-        debug: false
-      });
-
-      this.setupEventListeners();
-      
-      // Test connection with timeout
-      const networkPromise = this.provider.getNetwork();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout')), 15000) // Increased timeout
-      );
-      
-      await Promise.race([networkPromise, timeoutPromise]);
-      
-      console.log('✅ WebSocket connected successfully');
-      this.lastActivityTime = Date.now();
-      
-      this.reconnectAttempts = 0;
-      this.reconnectDelay = 1000;
-      this.isConnecting = false;
-      
-      this.setupContractListening();
-      this.startKeepAlive(); // Start keep-alive mechanism
-      
-    } catch (error) {
-      console.error('❌ WebSocket connection failed:', error.message);
-      this.isConnecting = false;
-      
-      // Only schedule reconnect if not destroyed
-      if (!this.isDestroyed) {
-        this.scheduleReconnect();
-      }
-    }
-  }
-
-  async cleanup() {
-    if (this.provider) {
-      try {
-        // Stop keep-alive first
-        this.stopKeepAlive();
-        
-        // Remove all listeners first
-        this.provider.removeAllListeners();
-        
-        // Close WebSocket connection if it exists
-        const wsForClose = this._ws;
-        if (wsForClose) {
-          wsForClose.removeAllListeners();
-          if (wsForClose.readyState === 1) { // OPEN
-            wsForClose.close(1000, 'Normal closure'); // Proper close code
-          }
-        }
-        
-        // Destroy provider
-        if (typeof this.provider.destroy === 'function') {
-          await this.provider.destroy();
-        }
-        
-        console.log('🧹 Cleaned up existing provider');
-      } catch (error) {
-        console.error('⚠️ Error during cleanup:', error.message);
-      }
-    }
-  }
-
-  setupEventListeners() {
-    if (!this.provider || this.isDestroyed) return;
-
-    const ws = this._ws;
-    if (ws) {
-      ws.on('close', (code, reason) => {
-        console.log(`🔌 WebSocket closed: ${code} - ${reason}`);
-        this.stopKeepAlive();
-        if (!this.isDestroyed) {
-          // Add delay before reconnecting to avoid rapid reconnections
-          setTimeout(() => {
-            if (!this.isDestroyed) {
-              this.scheduleReconnect();
-            }
-          }, 2000);
-        }
-      });
-
-      ws.on('error', (error) => {
-        console.error('❌ WebSocket error:', error.message);
-        this.stopKeepAlive();
-        if (!this.isDestroyed) {
-          this.scheduleReconnect();
-        }
-      });
-
-      // Enhanced ping/pong handling
-      ws.on('ping', (data) => {
-        console.log('🏓 WebSocket ping received');
-        this.lastActivityTime = Date.now();
-        ws.pong(data); // Respond to ping
-      });
-
-      ws.on('pong', () => {
-        console.log('🏓 WebSocket pong received');
-        this.lastActivityTime = Date.now();
-      });
-
-      // Track any message activity
-      ws.on('message', () => {
-        this.lastActivityTime = Date.now();
-      });
-    }
-
-    // Listen for provider events too
-    this.provider.on('error', (error) => {
-      console.error('❌ Provider error:', error.message);
-      if (!this.isDestroyed) {
-        this.scheduleReconnect();
-      }
-    });
-  }
-
-  startKeepAlive() {
-    this.stopKeepAlive(); // Clear any existing timer
-    
-    // Send ping every 30 seconds to keep connection alive
-    this.keepAliveTimer = setInterval(() => {
-      const ws = this._ws;
-      if (ws && ws.readyState === 1) {
-        try {
-          ws.ping();
-          console.log('🏓 Sent keep-alive ping');
-          
-          // Check if we haven't received any activity in 90 seconds
-          const timeSinceActivity = Date.now() - this.lastActivityTime;
-          if (timeSinceActivity > 90000) {
-            console.log('⚠️ No activity for 90 seconds, forcing reconnection');
-            this.scheduleReconnect();
-          }
-        } catch (error) {
-          console.error('❌ Keep-alive ping failed:', error.message);
-          this.scheduleReconnect();
-        }
-      }
-    }, 30000); // 30 seconds
-  }
-
-  stopKeepAlive() {
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = null;
-    }
-  }
-
-  setupContractListening() {
-    if (!this.provider || this.isDestroyed) return;
-    
-    try {
-      // Add error handling for the event listener
-      this.provider.on({ address: this.contractAddress.toLowerCase() }, (log) => {
-        this.lastActivityTime = Date.now(); // Update activity time on events
-        this.eventHandler(log);
-      });
-      
-      console.log(`👂 Listening for events on contract: ${this.contractAddress}`);
-    } catch (error) {
-      console.error('❌ Failed to set up contract listening:', error.message);
-      if (!this.isDestroyed) {
-        this.scheduleReconnect();
-      }
-    }
-  }
-
-  scheduleReconnect() {
-    if (this.isConnecting || this.isDestroyed) return;
-    
-    // Clear existing timer if any
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-    }
-    
-    this.stopKeepAlive(); // Stop keep-alive during reconnection
-    
-    this.reconnectAttempts++;
-    
-    if (this.reconnectAttempts > this.maxReconnectAttempts) {
-      console.error(`💀 Max reconnection attempts (${this.maxReconnectAttempts}) reached. Stopping.`);
-      return;
-    }
-
-    const delay = Math.min(
-      this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts), 
-      this.maxReconnectDelay
-    );
-    
-    console.log(`⏰ Scheduling reconnection in ${delay}ms (attempt ${this.reconnectAttempts})`);
-    
-    this.reconnectTimer = setTimeout(() => {
-      if (!this.isDestroyed) {
-        this.connect();
-      }
-    }, delay);
-  }
-
-  async restart() {
-    console.log('🔄 Manual restart initiated...');
-    this.reconnectAttempts = 0;
-    this.reconnectDelay = 1000;
-    
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    
-    this.stopKeepAlive();
-    await this.cleanup();
-    
-    // Wait a bit before reconnecting
-    setTimeout(() => {
-      if (!this.isDestroyed) {
-        this.connect();
-      }
-    }, 3000); // Increased delay
-  }
-
-  async destroy() {
-    console.log('🛑 Destroying WebSocket provider...');
-    this.isDestroyed = true;
-    
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    
-    this.stopKeepAlive();
-    await this.cleanup();
-    this.provider = null;
-  }
-
-  get currentProvider() {
-    return this.provider;
-  }
-
-  get _ws() {
-    try {
-      return this.provider?.websocket || null;
-    } catch {
-      return null;
-    }
-  }
-
-  get isConnected() {
-    const ws = this._ws;
-    return !!(this.provider &&
-           ws &&
-           ws.readyState === 1 && // WebSocket.OPEN
-           (Date.now() - this.lastActivityTime) < 120000); // Active within 2 minutes
-  }
-}
-
-
-// ZKP2P Escrow contract on Base (legacy)
-const escrowContractAddress = '0xca38607d85e8f6294dc10728669605e6664c2d70';
-
-// ZKP2P Orchestrator contract on Base (v2)
-const orchestratorContractAddress = '0x88888883Ed048FF0a415271B28b2F52d431810D0';
-
-// ZKP2P V3 Escrow contract on Base
-const escrowV3ContractAddress = '0x2f121cddca6d652f35e8b3e560f9760898888888';
-
-// ZKP2P EscrowV2 contract on Base (NEW - runs alongside legacy + v3)
-const escrowV2ContractAddress = '0x777777779d229cdF3110e9de47943791c26300Ef';
-
-// ZKP2P OrchestratorV2 contract on Base (NEW - runs alongside existing orchestrator)
-const orchestratorV2ContractAddress = '0x888888359E981B5225CA48fbCdCeff702FC3b888';
-
-// ABI with exact event definitions from the contract (including sniper events)
-const abi = [
-  `event IntentSignaled(
-    bytes32 indexed intentHash,
-    uint256 indexed depositId,
-    address indexed verifier,
-    address owner,
-    address to,
-    uint256 amount,
-    bytes32 fiatCurrency,
-    uint256 conversionRate,
-    uint256 timestamp
-  )`,
-  `event IntentFulfilled(
-    bytes32 indexed intentHash,
-    uint256 indexed depositId,
-    address indexed verifier,
-    address owner,
-    address to,
-    uint256 amount,
-    uint256 sustainabilityFee,
-    uint256 verifierFee
-  )`,
-  `event IntentPruned(
-    bytes32 indexed intentHash,
-    uint256 indexed depositId
-  )`,
-  `event DepositReceived(
-    uint256 indexed depositId,
-    address indexed depositor,  
-    address indexed token,
-    uint256 amount,
-    tuple(uint256,uint256) intentAmountRange
-  )`,
-  `event DepositCurrencyAdded(
-    uint256 indexed depositId,
-    address indexed verifier,
-    bytes32 indexed currency,
-    uint256 conversionRate
-  )`,
-  `event DepositVerifierAdded(
-    uint256 indexed depositId,
-    address indexed verifier,
-    bytes32 indexed payeeDetailsHash,
-    address intentGatingService
-  )`,
-  `event DepositWithdrawn(
-    uint256 indexed depositId,
-    address indexed depositor,
-    uint256 amount
-  )`,
-  `event DepositClosed(
-    uint256 depositId,
-    address depositor
-  )`,
-  `event DepositCurrencyRateUpdated(
-    uint256 indexed depositId,
-    address indexed verifier,
-    bytes32 indexed currency,
-    uint256 conversionRate
-  )`,
-  `event BeforeExecution()`,
-  `event UserOperationEvent(
-    bytes32 indexed userOpHash,
-    address indexed sender,
-    address indexed paymaster,
-    uint256 nonce,
-    bool success,
-    uint256 actualGasCost,
-    uint256 actualGasUsed
-)`,
-`event DepositConversionRateUpdated(
-  uint256 indexed depositId,
-  address indexed verifier,
-  bytes32 indexed currency,
-  uint256 newConversionRate
-)`
-];
-
-// Orchestrator ABI (v2) - different event structure
-const orchestratorAbi = [
-  `event IntentSignaled(
-    bytes32 indexed intentHash,
-    address indexed escrow,
-    uint256 indexed depositId,
-    bytes32 paymentMethod,
-    address owner,
-    address to,
-    uint256 amount,
-    bytes32 fiatCurrency,
-    uint256 conversionRate,
-    uint256 timestamp
-  )`,
-  `event IntentFulfilled(
-    bytes32 indexed intentHash,
-    address indexed fundsTransferredTo,
-    uint256 amount,
-    bool isManualRelease
-  )`,
-  `event IntentPruned(
-    bytes32 indexed intentHash
-)`
-];
-
-// V3 Escrow ABI - different event structure
-const escrowV3Abi = [
-  `event DepositReceived(
-    uint256 indexed depositId,
-    address indexed depositor,
-    address indexed token,
-    uint256 amount,
-    tuple(uint256,uint256) intentAmountRange,
-    address delegate,
-    address intentGuardian
-  )`,
-  `event DepositCurrencyAdded(
-    uint256 indexed depositId,
-    bytes32 indexed paymentMethod,
-    bytes32 indexed currency,
-    uint256 minConversionRate
-  )`,
-  `event DepositPaymentMethodAdded(
-    uint256 indexed depositId,
-    bytes32 indexed paymentMethod,
-    bytes32 indexed payeeDetails,
-    address intentGatingService
-  )`
-];
-
-const iface = new Interface(abi);
+const iface = new Interface(legacyEscrowAbi);
 const orchestratorIface = new Interface(orchestratorAbi);
-const escrowV3Iface = new Interface(escrowV3Abi);
-
-// EscrowV2 ABI - same architecture as V3, extended with rate update + close events
-const escrowV2Abi = [
-  ...escrowV3Abi,
-  `event DepositMinConversionRateUpdated(
-    uint256 indexed depositId,
-    bytes32 indexed paymentMethod,
-    bytes32 indexed currency,
-    uint256 newMinConversionRate
-  )`,
-  `event DepositFundsAdded(
-    uint256 indexed depositId,
-    address indexed depositor,
-    uint256 amount
-  )`,
-  `event DepositWithdrawn(
-    uint256 indexed depositId,
-    address indexed depositor,
-    uint256 amount
-  )`,
-  `event DepositClosed(
-    uint256 depositId,
-    address depositor
-  )`,
-  `event DepositOracleRateConfigSet(
-    uint256 indexed depositId,
-    bytes32 indexed paymentMethod,
-    bytes32 indexed currencyCode,
-    address adapter,
-    bytes adapterConfig,
-    int16 spreadBps,
-    uint32 maxStaleness
-  )`
-];
-
-// OrchestratorV2 ABI - same core events, plus fee events
-const orchestratorV2Abi = [
-  ...orchestratorAbi,
-  `event IntentManagerFeeSnapshotted(
-    bytes32 indexed intentHash,
-    address indexed feeRecipient,
-    uint256 fee
-  )`,
-  `event IntentReferralFeeDistributed(
-    bytes32 indexed intentHash,
-    address indexed feeRecipient,
-    uint256 feeAmount
-  )`
-];
-
+const escrowV3Iface = new Interface(escrowAbi);
 const escrowV2Iface = new Interface(escrowV2Abi);
-const orchestratorV2Iface = new Interface(orchestratorV2Abi);
+const orchestratorV2Iface = new Interface(modernOrchestratorAbi);
 const pendingTransactions = new Map(); // txHash -> {fulfilled: Set, pruned: Set, blockNumber: number, rawIntents: Map}
 const processingScheduled = new Set(); // Track which transactions are scheduled for processing
 
@@ -1149,9 +679,10 @@ function scheduleTransactionProcessing(txHash) {
   
   processingScheduled.add(txHash);
   
-  setTimeout(async () => {
-    await processCompletedTransaction(txHash);
-    processingScheduled.delete(txHash);
+  setTimeout(() => {
+    processCompletedTransaction(txHash)
+      .catch((error) => console.error(`Failed to process transaction ${txHash}:`, error))
+      .finally(() => processingScheduled.delete(txHash));
   }, 10000); // Wait 10 seconds for all events to arrive
 }
 
@@ -1159,40 +690,35 @@ async function processCompletedTransaction(txHash) {
   const txData = pendingTransactions.get(txHash);
   if (!txData) return;
   
-  console.log(`🔄 Processing completed transaction ${txHash}`);
-  
-  // Process pruned intents first, but skip if also fulfilled
-  for (const intentHash of txData.pruned) {
-    if (txData.fulfilled.has(intentHash)) {
-      console.log(`Intent ${intentHash} was both pruned and fulfilled in tx ${txHash}, prioritizing fulfilled status`);
-      continue; // Skip sending pruned notification
-    }
-    
-    // Send pruned notification
-    const rawIntent = txData.rawIntents.get(intentHash);
-    if (rawIntent) {
-      if (rawIntent.eventType === 'orchestrator') {
+  try {
+    console.log(`🔄 Processing completed transaction ${txHash}`);
+
+    // Process pruned intents first, but skip if also fulfilled
+    for (const intentHash of txData.pruned) {
+      if (txData.fulfilled.has(intentHash)) {
+        console.log(`Intent ${intentHash} was both pruned and fulfilled in tx ${txHash}, prioritizing fulfilled status`);
+        continue;
+      }
+
+      const rawIntent = txData.rawIntents.get(intentHash);
+      if (rawIntent?.eventType === 'orchestrator') {
         await sendOrchestratorPrunedNotification(rawIntent, txHash);
-      } else {
+      } else if (rawIntent) {
         await sendPrunedNotification(rawIntent, txHash);
       }
     }
-  }
-  
-  // Process fulfilled intents
-  for (const intentHash of txData.fulfilled) {
-    const rawIntent = txData.rawIntents.get(intentHash);
-    if (rawIntent) {
-      if (rawIntent.eventType === 'orchestrator') {
+
+    for (const intentHash of txData.fulfilled) {
+      const rawIntent = txData.rawIntents.get(intentHash);
+      if (rawIntent?.eventType === 'orchestrator') {
         await sendOrchestratorFulfilledNotification(rawIntent, txHash);
-      } else {
+      } else if (rawIntent) {
         await sendFulfilledNotification(rawIntent, txHash);
       }
     }
+  } finally {
+    pendingTransactions.delete(txHash);
   }
-  
-  // Clean up
-  pendingTransactions.delete(txHash);
 }
 
 async function sendFulfilledNotification(rawIntent, txHash) {
@@ -1313,7 +839,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
   
   // Try to get platform name from payment method first (Orchestrator v2/v3), fallback to verifier address
   const platformName = paymentMethod ? getPlatformName(paymentMethod) : getPlatformName(verifier);
-  const contractLabel = storedDetails.isEscrowV2 ? ' (v2)' : '';
+  const contractLabel = storedDetails.contractLabel || '';
 
   let rateText = '';
   if (oldIntentDetails || storedDetails.fiatCurrency) {
@@ -1321,6 +847,9 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
     const formattedRate = formatConversionRate(storedDetails.conversionRate || 0n, fiatCode);
     rateText = `\n- *Rate:* ${formattedRate}`;
   }
+
+  orchestratorIntentDetails.delete(intentHashLower);
+  intentDetails.delete(intentHashLower);
 
   const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
   if (interestedUsers.length === 0) return;
@@ -1360,10 +889,6 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
     }
     bot.sendMessage(chatId, message, sendOptions);
   }
-  
-  // Clean up
-  orchestratorIntentDetails.delete(intentHashLower);
-  intentDetails.delete(intentHashLower);
 }
 
 async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
@@ -1378,7 +903,10 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
   }
   
   const depositId = storedDetails.depositId;
-  const contractLabel = storedDetails.isEscrowV2 ? ' (v2)' : '';
+  const contractLabel = storedDetails.contractLabel || '';
+
+  orchestratorIntentDetails.delete(intentHashLower);
+  intentDetails.delete(intentHashLower);
 
   const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
   if (interestedUsers.length === 0) return;
@@ -1415,58 +943,10 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
     }
     bot.sendMessage(chatId, message, sendOptions);
   }
-  
-  // Clean up
-  orchestratorIntentDetails.delete(intentHashLower);
-  intentDetails.delete(intentHashLower);
 }
 
 
 
-// Unified platform mapping (supports both verifier addresses and payment method hashes)
-// Works for Escrow v1 (addresses) and Orchestrator v2/v3 (payment method hashes)
-const platformMapping = {
-  // Verifier addresses (Escrow v1) - 40 chars
-  '0x76d33a33068d86016b806df02376ddbb23dd3703': { platform: 'cashapp', isUsdOnly: true },
-  '0x9a733b55a875d0db4915c6b36350b24f8ab99df5': { platform: 'venmo', isUsdOnly: true },
-  '0xaa5a1b62b01781e789c900d616300717cd9a41ab': { platform: 'revolut', isUsdOnly: false },
-  '0xff0149799631d7a5bde2e7ea9b306c42b3d9a9ca': { platform: 'wise', isUsdOnly: false },
-  '0x03d17e9371c858072e171276979f6b44571c5dea': { platform: 'paypal', isUsdOnly: false },
-  '0x0de46433bd251027f73ed8f28e01ef05da36a2e0': { platform: 'monzo', isUsdOnly: false },
-  '0xf2ac5be14f32cbe6a613cff8931d95460d6c33a3': { platform: 'mercado pago', isUsdOnly: false },
-  '0x431a078a5029146aab239c768a615cd484519af7': { platform: 'zelle', isUsdOnly: true },
-  // Payment method hashes (Orchestrator v2/v3) - 66 chars
-  '0x90262a3db0edd0be2369c6b28f9e8511ec0bac7136cefbada0880602f87e7268': { platform: 'venmo', isUsdOnly: true },
-  '0x617f88ab82b5c1b014c539f7e75121427f0bb50a4c58b187a238531e7d58605d': { platform: 'revolut', isUsdOnly: false },
-  '0x10940ee67cfb3c6c064569ec92c0ee934cd7afa18dd2ca2d6a2254fcb009c17d': { platform: 'cashapp', isUsdOnly: true },
-  '0x554a007c2217df766b977723b276671aee5ebb4adaea0edb6433c88b3e61dac5': { platform: 'wise', isUsdOnly: false },
-  '0xa5418819c024239299ea32e09defae8ec412c03e58f5c75f1b2fe84c857f5483': { platform: 'mercado pago', isUsdOnly: false },
-  '0x817260692b75e93c7fbc51c71637d4075a975e221e1ebc1abeddfabd731fd90d': { platform: 'zelle', isUsdOnly: true },
-  '0x6aa1d1401e79ad0549dced8b1b96fb72c41cd02b32a7d9ea1fed54ba9e17152e': { platform: 'zelle', isUsdOnly: true },
-  '0x4bc42b322a3ad413b91b2fde30549ca70d6ee900eded1681de91aaf32ffd7ab5': { platform: 'zelle', isUsdOnly: true },
-  '0x3ccc3d4d5e769b1f82dc4988485551dc0cd3c7a3926d7d8a4dde91507199490f': { platform: 'paypal', isUsdOnly: false },
-  '0x62c7ed738ad3e7618111348af32691b5767777fbaf46a2d8943237625552645c': { platform: 'monzo', isUsdOnly: false },
-  '0xd9ff4fd6b39a3e3dd43c41d05662a5547de4a878bc97a65bcb352ade493cdc6b': { platform: 'n26', isUsdOnly: false },
-  '0x5908bb0c9b87763ac6171d4104847667e7f02b4c47b574fe890c1f439ed128bb': { platform: 'chime', isUsdOnly: true }  
-};
-
-// Unified platform name lookup - works with both verifier addresses and payment method hashes
-const getPlatformName = (identifier) => {
-  const mapping = platformMapping[identifier.toLowerCase()];
-  if (mapping) {
-    // Normalize zelle variants to just "zelle" for display
-    return mapping.platform.startsWith('zelle') ? 'zelle' : mapping.platform;
-  }
-  // Show truncated identifier for unknown platforms
-  const identifierStr = identifier.toLowerCase();
-  if (identifierStr.length === 42) {
-    // Address format (40 chars + 0x)
-    return `Unknown (${identifierStr.slice(0, 6)}...${identifierStr.slice(-4)})`;
-  } else {
-    // Hash format (64 chars + 0x)
-    return `Unknown (${identifierStr.slice(0, 8)}...${identifierStr.slice(-6)})`;
-  }
-};
 
 // Helper functions
 const formatUSDC = (amount) => (Number(amount) / 1e6).toFixed(2);
@@ -1810,91 +1290,56 @@ bot.onText(/\/clearall/, async (msg) => {
 
 bot.onText(/\/status/, async (msg) => {
   const chatId = msg.chat.id;
-  
+
   try {
-    const escrowConnected = resilientProvider?.isConnected || false;
-    const orchestratorConnected = orchestratorProvider?.isConnected || false;
-    const escrowV3Connected = escrowV3Provider?.isConnected || false;
-    const escrowV2Connected = escrowV2Provider?.isConnected || false;
-    const orchestratorV2Connected = orchestratorV2Provider?.isConnected || false;
-    const escrowStatus = escrowConnected ? '🟢 Connected' : '🔴 Disconnected';
-    const orchestratorStatus = orchestratorConnected ? '🟢 Connected' : '🔴 Disconnected';
-    const escrowV3Status = escrowV3Connected ? '🟢 Connected' : '🔴 Disconnected';
-    const escrowV2Status = escrowV2Connected ? '🟢 Connected' : '🔴 Disconnected';
-    const orchestratorV2Status = orchestratorV2Connected ? '🟢 Connected' : '🔴 Disconnected';
-    
-    // Test database connection
+    const eventStreamStatus = eventProvider?.isConnected ? '🟢 Connected' : '🔴 Disconnected';
     let dbStatus = '🔴 Disconnected';
+    let botStatus = '🔴 Disconnected';
+
     try {
-      const { data, error } = await supabase.from('users').select('chat_id').limit(1);
+      const { error } = await supabase.from('users').select('chat_id').limit(1);
       if (!error) dbStatus = '🟢 Connected';
     } catch (error) {
-      console.error('Database test failed:', error);
+      console.error('Database status check failed:', error.message);
     }
-    
-    // Test Telegram connection
-    let botStatus = '🔴 Disconnected';
+
     try {
       await bot.getMe();
       botStatus = '🟢 Connected';
     } catch (error) {
-      console.error('Bot test failed:', error);
+      console.error('Telegram status check failed:', error.message);
     }
-    
+
     const listeningAll = await db.getUserListenAll(chatId);
     const trackedCount = (await db.getUserDeposits(chatId)).size;
     const snipers = await db.getUserSnipers(chatId);
-    
-    let message = `🔧 *System Status:*\n\n`;
-    message += `• *Escrow WebSocket (v1):* ${escrowStatus}\n`;
-    message += `• *Orchestrator WebSocket (v2):* ${orchestratorStatus}\n`;
-    message += `• *Escrow WebSocket (v3):* ${escrowV3Status}\n`;
-    message += `• *EscrowV2 WebSocket (NEW):* ${escrowV2Status}\n`;
-    message += `• *OrchestratorV2 WebSocket (NEW):* ${orchestratorV2Status}\n`;
-    message += `• *Database:* ${dbStatus}\n`;
-    message += `• *Telegram:* ${botStatus}\n\n`;
-    message += `📊 *Your Settings:*\n`;
-    
-    if (listeningAll) {
-      message += `• *Listening to:* ALL deposits\n`;
-    } else {
-      message += `• *Tracking:* ${trackedCount} specific deposits\n`;
-    }
-    
+
+    let message = `🔧 *System Status:*
+
+• *Base event stream:* ${eventStreamStatus}
+• *Contracts monitored:* ${contractSubscriptions.length} (including OrchestratorV3)
+• *Database:* ${dbStatus}
+• *Telegram:* ${botStatus}
+
+📊 *Your Settings:*
+• *Listening to:* ${listeningAll ? 'ALL deposits' : `${trackedCount} specific deposits`}
+`;
+
     if (snipers.length > 0) {
-      message += `• *Sniping:* `;
-      const sniperTexts = snipers.map(sniper => {
-        const platformText = sniper.platform ? ` on ${sniper.platform}` : '';
-        return `${sniper.currency}${platformText}`;
-      });
-      message += `${sniperTexts.join(', ')}\n`;
+      const sniperTexts = snipers.map(({ currency, platform }) =>
+        `${currency}${platform ? ` on ${platform}` : ''}`
+      );
+      message += `• *Sniping:* ${sniperTexts.join(', ')}\n`;
     }
-    
-    // Add reconnection info if disconnected
-    if ((!escrowConnected && resilientProvider) || (!orchestratorConnected && orchestratorProvider) || (!escrowV3Connected && escrowV3Provider) || (!escrowV2Connected && escrowV2Provider) || (!orchestratorV2Connected && orchestratorV2Provider)) {
-      message += `\n⚠️ *Reconnection Attempts:*`;
-      if (!escrowConnected && resilientProvider) {
-        message += `\n• Escrow (v1): ${resilientProvider.reconnectAttempts}/${resilientProvider.maxReconnectAttempts}`;
-      }
-      if (!orchestratorConnected && orchestratorProvider) {
-        message += `\n• Orchestrator (v2): ${orchestratorProvider.reconnectAttempts}/${orchestratorProvider.maxReconnectAttempts}`;
-      }
-      if (!escrowV3Connected && escrowV3Provider) {
-        message += `\n• Escrow (v3): ${escrowV3Provider.reconnectAttempts}/${escrowV3Provider.maxReconnectAttempts}`;
-      }
-      if (!escrowV2Connected && escrowV2Provider) {
-        message += `\n• EscrowV2 (NEW): ${escrowV2Provider.reconnectAttempts}/${escrowV2Provider.maxReconnectAttempts}`;
-      }
-      if (!orchestratorV2Connected && orchestratorV2Provider) {
-        message += `\n• OrchestratorV2 (NEW): ${orchestratorV2Provider.reconnectAttempts}/${orchestratorV2Provider.maxReconnectAttempts}`;
-      }
+
+    if (!eventProvider?.isConnected) {
+      message += `\n⚠️ *Reconnection attempts:* ${eventProvider.reconnectAttempts}/${eventProvider.maxReconnectAttempts}`;
     }
-    
-    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-    
+
+    await bot.sendMessage(chatId, message.trim(), { parse_mode: 'Markdown' });
   } catch (error) {
     console.error('Status command failed:', error);
-    bot.sendMessage(chatId, '❌ Failed to get status', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, '❌ Failed to get status');
   }
 });
 
@@ -1953,7 +1398,7 @@ bot.onText(/\/sniper (?!threshold)(.+)/, async (msg, match) => {
   const platform = parts[1] ? parts[1].toLowerCase() : null;
   
   const supportedCurrencies = Object.values(currencyHashToCode);
-  const supportedPlatforms = ['revolut', 'wise', 'cashapp', 'venmo', 'zelle'];
+  const supportedPlatforms = SUPPORTED_SNIPER_PLATFORMS;
   
   if (!supportedCurrencies.includes(currency)) {
     bot.sendMessage(chatId, `❌ Currency '${currency}' not supported.\n\n*Supported currencies:*\n${supportedCurrencies.join(', ')}`, { parse_mode: 'Markdown' });
@@ -2520,549 +1965,197 @@ const handleEscrowV2Event = async (log) => {
   }
 };
 
-// OrchestratorV2 event handler (new contract - same event signatures, adds isEscrowV2 flag)
-const handleOrchestratorV2Event = async (log) => {
-  console.log('\n📦 OrchestratorV2 event received:');
-  console.log(log);
+function collectOrchestratorTerminalEvent(log, parsed, eventType) {
+  const { intentHash } = parsed.args;
+  const intentHashLower = intentHash.toLowerCase();
+  const txHash = log.transactionHash;
 
-  try {
-    const parsed = orchestratorV2Iface.parseLog({
-      data: log.data,
-      topics: log.topics
+  if (!pendingTransactions.has(txHash)) {
+    pendingTransactions.set(txHash, {
+      fulfilled: new Set(),
+      pruned: new Set(),
+      blockNumber: log.blockNumber,
+      rawIntents: new Map()
     });
+  }
 
-    if (!parsed) {
-      console.log('⚠️ OrchestratorV2 log format did not match our ABI');
-      return;
-    }
+  const txData = pendingTransactions.get(txHash);
+  txData[eventType === 'fulfilled' ? 'fulfilled' : 'pruned'].add(intentHashLower);
+  txData.rawIntents.set(intentHashLower, {
+    eventType: 'orchestrator',
+    type: eventType,
+    intentHash,
+    ...(eventType === 'fulfilled' ? {
+      fundsTransferredTo: parsed.args.fundsTransferredTo,
+      amount: parsed.args.amount,
+      isManualRelease: parsed.args.isManualRelease
+    } : {})
+  });
+  scheduleTransactionProcessing(txHash);
+}
 
-    console.log('✅ Parsed OrchestratorV2 event:', parsed.name);
+function createOrchestratorEventHandler(sourceLabel, eventInterface) {
+  return async (log) => {
+    try {
+      const parsed = eventInterface.parseLog({ data: log.data, topics: log.topics });
+      if (!parsed) return;
 
-    const { name } = parsed;
-
-    // Governance events
-    if (name === 'Paused' || name === 'Unpaused' ||
-        name === 'OwnershipTransferred' ||
-        name === 'EscrowRegistryUpdated' || name === 'PaymentVerifierRegistryUpdated' ||
-        name === 'PostIntentHookRegistryUpdated' || name === 'RelayerRegistryUpdated' ||
-        name === 'ProtocolFeeUpdated' || name === 'ProtocolFeeRecipientUpdated' ||
-        name === 'AllowMultipleIntentsUpdated' || name === 'PartialManualReleaseDelayUpdated') {
-      console.log(`👁️ Ignoring OrchestratorV2 governance event: ${name}`);
-      return;
-    }
-
-    // Fee events - log but don't notify
-    if (name === 'IntentManagerFeeSnapshotted' || name === 'IntentReferralFeeDistributed') {
-      console.log(`💸 OrchestratorV2 fee event: ${name} - logged`);
-      return;
-    }
-
-    if (name === 'IntentSignaled') {
-      const { intentHash, escrow, depositId, paymentMethod, owner, to, amount, fiatCurrency, conversionRate, timestamp } = parsed.args;
-      const id = Number(depositId);
-      const intentHashLower = intentHash.toLowerCase();
-      const isNewEscrow = escrow.toLowerCase() === escrowV2ContractAddress.toLowerCase();
-      const contractLabel = isNewEscrow ? ' (v2)' : '';
-
-      console.log(`🧪 OrchestratorV2 IntentSignaled - depositId: ${id}, escrow: ${isNewEscrow ? 'EscrowV2' : escrow}`);
-
-      orchestratorIntentDetails.set(intentHashLower, {
-        depositId: id,
-        escrow,
-        isEscrowV2: isNewEscrow,
-        paymentMethod,
-        owner,
-        to,
-        amount,
-        fiatCurrency,
-        conversionRate,
-        timestamp
-      });
-
-      intentDetails.set(intentHashLower, { fiatCurrency, conversionRate, verifier: escrow });
-
-      // Store deposit amount in the appropriate cache
-      const usdcAmount = Number(amount);
-      if (isNewEscrow) {
-        escrowV2DepositAmounts.set(id, usdcAmount);
-      } else {
-        await db.storeDepositAmount(id, usdcAmount);
-      }
-
-      const fiatCode = getFiatCode(fiatCurrency);
-      const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
-      const formattedRate = formatConversionRate(conversionRate, fiatCode);
-      const platformName = getPlatformName(paymentMethod);
-
-      const interestedUsers = await db.getUsersInterestedInDeposit(id);
-      if (interestedUsers.length === 0) {
-        console.log('🚫 Ignored — no users interested in this depositId.');
+      const { name } = parsed;
+      if (
+        name === 'IntentManagerFeeSnapshotted' ||
+        name === 'IntentReferralFeeDistributed' ||
+        name === 'IntentLifecycleHookSnapshotted'
+      ) {
         return;
       }
 
-      console.log(`📤 Sending to ${interestedUsers.length} users interested in deposit ${id}`);
+      if (name === 'IntentSignaled') {
+        const {
+          intentHash,
+          escrow,
+          depositId,
+          paymentMethod,
+          owner,
+          to,
+          amount,
+          fiatCurrency,
+          conversionRate,
+          timestamp
+        } = parsed.args;
+        const id = Number(depositId);
+        const intentHashLower = intentHash.toLowerCase();
+        const contractLabel = sourceLabel === 'O1' ? '' : ` (${sourceLabel})`;
 
-      const message = `
+        orchestratorIntentDetails.set(intentHashLower, {
+          depositId: id,
+          escrow,
+          paymentMethod,
+          owner,
+          to,
+          amount,
+          fiatCurrency,
+          conversionRate,
+          timestamp,
+          contractLabel
+        });
+        intentDetails.set(intentHashLower, {
+          fiatCurrency,
+          conversionRate,
+          verifier: paymentMethod
+        });
+
+        const interestedUsers = await db.getUsersInterestedInDeposit(id);
+        if (interestedUsers.length === 0) return;
+
+        const fiatCode = getFiatCode(fiatCurrency);
+        const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
+        const message = `
 🟡 *Order Created${contractLabel}*
 • *Deposit ID:* \`${id}\`
 • *Order ID:* \`${intentHash}\`
-• *Platform:* ${platformName}
+• *Platform:* ${getPlatformName(paymentMethod)}
 • *Owner:* \`${owner}\`
 • *To:* \`${to}\`
 • *Amount:* ${formatUSDC(amount)} USDC
 • *Fiat Amount:* ${fiatAmount} ${fiatCode}
-• *Rate:* ${formattedRate}
+• *Rate:* ${formatConversionRate(conversionRate, fiatCode)}
 • *Time:* ${formatTimestamp(timestamp)}
 • *Block:* ${log.blockNumber}
 • *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
 `.trim();
 
-      await postToDiscord({
-        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: toDiscordMarkdown(message),
-        components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
-      });
-
-      for (const chatId of interestedUsers) {
-        await db.updateDepositStatus(chatId, id, 'signaled', intentHash);
-        await db.logEventNotification(chatId, id, 'signaled');
-
-        const sendOptions = {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: true,
-          reply_markup: createDepositKeyboard(id)
-        };
-        if (chatId === ZKP2P_GROUP_ID) {
-          sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-        }
-        bot.sendMessage(chatId, message, sendOptions);
-      }
-      return;
-    }
-
-    if (name === 'IntentFulfilled') {
-      const { intentHash, fundsTransferredTo, amount, isManualRelease } = parsed.args;
-      const intentHashLower = intentHash.toLowerCase();
-      const txHash = log.transactionHash;
-
-      console.log('🧪 OrchestratorV2 IntentFulfilled collected for batching - intentHash:', intentHash);
-
-      if (!pendingTransactions.has(txHash)) {
-        pendingTransactions.set(txHash, {
-          fulfilled: new Set(),
-          pruned: new Set(),
-          blockNumber: log.blockNumber,
-          rawIntents: new Map()
+        await postToDiscord({
+          webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
+          threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
+          content: toDiscordMarkdown(message),
+          components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
         });
-      }
 
-      const txData = pendingTransactions.get(txHash);
-      txData.fulfilled.add(intentHashLower);
-      txData.rawIntents.set(intentHashLower, {
-        eventType: 'orchestrator',
-        type: 'fulfilled',
-        intentHash,
-        fundsTransferredTo,
-        amount,
-        isManualRelease
-      });
-
-      scheduleTransactionProcessing(txHash);
-      return;
-    }
-
-    if (name === 'IntentPruned') {
-      const { intentHash } = parsed.args;
-      const intentHashLower = intentHash.toLowerCase();
-      const txHash = log.transactionHash;
-
-      console.log('🧪 OrchestratorV2 IntentPruned collected for batching - intentHash:', intentHash);
-
-      if (!pendingTransactions.has(txHash)) {
-        pendingTransactions.set(txHash, {
-          fulfilled: new Set(),
-          pruned: new Set(),
-          blockNumber: log.blockNumber,
-          rawIntents: new Map()
-        });
-      }
-
-      const txData = pendingTransactions.get(txHash);
-      txData.pruned.add(intentHashLower);
-      txData.rawIntents.set(intentHashLower, {
-        eventType: 'orchestrator',
-        type: 'pruned',
-        intentHash
-      });
-
-      scheduleTransactionProcessing(txHash);
-      return;
-    }
-
-    console.log(`ℹ️ Unhandled OrchestratorV2 event: ${name} - ignoring`);
-
-  } catch (err) {
-    console.error('❌ Failed to parse OrchestratorV2 log:', err.message);
-  }
-};
-
-// Orchestrator event handler (v2)
-const handleOrchestratorEvent = async (log) => {
-  console.log('\n📦 Orchestrator event received:');
-  console.log(log);
-
-  try {
-    const parsed = orchestratorIface.parseLog({ 
-      data: log.data, 
-      topics: log.topics 
-    });
-    
-    if (!parsed) {
-      console.log('⚠️ Orchestrator log format did not match our ABI');
-      return;
-    }
-    
-    console.log('✅ Parsed Orchestrator event:', parsed.name);
-    console.log('🔍 Args:', parsed.args);
-
-    const { name } = parsed;
-
-    // Governance events we explicitly ignore
-    if (name === 'Paused' || name === 'Unpaused' || 
-        name === 'OwnershipTransferred' ||
-        name === 'EscrowRegistryUpdated' || name === 'PaymentVerifierRegistryUpdated' ||
-        name === 'PostIntentHookRegistryUpdated' || name === 'RelayerRegistryUpdated' ||
-        name === 'ProtocolFeeUpdated' || name === 'ProtocolFeeRecipientUpdated' ||
-        name === 'AllowMultipleIntentsUpdated' || name === 'PartialManualReleaseDelayUpdated') {
-      console.log(`👁️ Ignoring governance event: ${name}`);
-      return;
-    }
-
-    if (name === 'IntentSignaled') {
-      const { intentHash, escrow, depositId, paymentMethod, owner, to, amount, fiatCurrency, conversionRate, timestamp } = parsed.args;
-      const id = Number(depositId);
-      const intentHashLower = intentHash.toLowerCase();
-      
-      console.log('🧪 Orchestrator IntentSignaled - depositId:', id);
-      
-      // Store intent details for later use
-      orchestratorIntentDetails.set(intentHashLower, {
-        depositId: id,
-        escrow,
-        paymentMethod,
-        owner,
-        to,
-        amount,
-        fiatCurrency,
-        conversionRate,
-        timestamp
-      });
-      
-      // Also add to intentDetails for backward compatibility with sniper logic
-      intentDetails.set(intentHashLower, { fiatCurrency, conversionRate, verifier: escrow });
-      
-      // Store deposit amount for sniper checks
-      const usdcAmount = Number(amount);
-      await db.storeDepositAmount(id, usdcAmount);
-      
-      const fiatCode = getFiatCode(fiatCurrency);
-      const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
-      const formattedRate = formatConversionRate(conversionRate, fiatCode);
-      
-      // Get platform name from payment method hash
-      const platformName = getPlatformName(paymentMethod);
-      
-      const interestedUsers = await db.getUsersInterestedInDeposit(id);
-      if (interestedUsers.length === 0) {
-        console.log('🚫 Ignored — no users interested in this depositId.');
+        await Promise.all(interestedUsers.map(async (chatId) => {
+          await db.updateDepositStatus(chatId, id, 'signaled', intentHash);
+          await db.logEventNotification(chatId, id, 'signaled');
+          const sendOptions = {
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true,
+            reply_markup: createDepositKeyboard(id)
+          };
+          if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
+          await bot.sendMessage(chatId, message, sendOptions);
+        }));
         return;
       }
 
-      console.log(`📤 Sending to ${interestedUsers.length} users interested in deposit ${id}`);
-
-      const message = `
-🟡 *Order Created*
-• *Deposit ID:* \`${id}\`
-• *Order ID:* \`${intentHash}\`
-• *Platform:* ${platformName}
-• *Owner:* \`${owner}\`
-• *To:* \`${to}\`
-• *Amount:* ${formatUSDC(amount)} USDC
-• *Fiat Amount:* ${fiatAmount} ${fiatCode} 
-• *Rate:* ${formattedRate}
-• *Time:* ${formatTimestamp(timestamp)}
-• *Block:* ${log.blockNumber}
-• *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
-`.trim();
-
-      await postToDiscord({
-        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: toDiscordMarkdown(message),
-        components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
-      });
-
-      for (const chatId of interestedUsers) {
-        await db.updateDepositStatus(chatId, id, 'signaled', intentHash);
-        await db.logEventNotification(chatId, id, 'signaled');
-        
-        const sendOptions = { 
-          parse_mode: 'Markdown', 
-          disable_web_page_preview: true,
-          reply_markup: createDepositKeyboard(id)
-        };
-        if (chatId === ZKP2P_GROUP_ID) {
-          sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-        }
-        bot.sendMessage(chatId, message, sendOptions);
+      if (name === 'IntentFulfilled') {
+        collectOrchestratorTerminalEvent(log, parsed, 'fulfilled');
+        return;
       }
-      return;
-    }
 
-    if (name === 'IntentFulfilled') {
-      const { intentHash, fundsTransferredTo, amount, isManualRelease } = parsed.args;
-      const intentHashLower = intentHash.toLowerCase();
-      const txHash = log.transactionHash;
-      
-      console.log('🧪 Orchestrator IntentFulfilled collected for batching - intentHash:', intentHash);
-      
-      // Initialize transaction data if not exists
-      if (!pendingTransactions.has(txHash)) {
-        pendingTransactions.set(txHash, {
-          fulfilled: new Set(),
-          pruned: new Set(),
-          blockNumber: log.blockNumber,
-          rawIntents: new Map()
-        });
+      if (name === 'IntentPruned') {
+        collectOrchestratorTerminalEvent(log, parsed, 'pruned');
       }
-      
-      // Store the fulfillment data
-      const txData = pendingTransactions.get(txHash);
-      txData.fulfilled.add(intentHashLower);
-      txData.rawIntents.set(intentHashLower, {
-        eventType: 'orchestrator',
-        type: 'fulfilled',
-        intentHash,
-        fundsTransferredTo,
-        amount,
-        isManualRelease
-      });
-      
-      // Schedule processing this transaction
-      scheduleTransactionProcessing(txHash);
-      return;
+    } catch (error) {
+      console.error(`Failed to process ${sourceLabel} log:`, error.message);
     }
+  };
+}
 
-    if (name === 'IntentPruned') {
-      const { intentHash } = parsed.args;
-      const intentHashLower = intentHash.toLowerCase();
-      const txHash = log.transactionHash;
-      
-      console.log('🧪 Orchestrator IntentPruned collected for batching - intentHash:', intentHash);
-      
-      // Initialize transaction data if not exists
-      if (!pendingTransactions.has(txHash)) {
-        pendingTransactions.set(txHash, {
-          fulfilled: new Set(),
-          pruned: new Set(),
-          blockNumber: log.blockNumber,
-          rawIntents: new Map()
-        });
-      }
-      
-      // Store the pruned data
-      const txData = pendingTransactions.get(txHash);
-      txData.pruned.add(intentHashLower);
-      txData.rawIntents.set(intentHashLower, {
-        eventType: 'orchestrator',
-        type: 'pruned',
-        intentHash
-      });
-      
-      // Schedule processing this transaction
-      scheduleTransactionProcessing(txHash);
-      return;
-    }
+const handleOrchestratorEvent = createOrchestratorEventHandler('O1', orchestratorIface);
+const handleOrchestratorV2Event = createOrchestratorEventHandler('O2', orchestratorV2Iface);
+const handleOrchestratorV3Event = createOrchestratorEventHandler('O3', orchestratorV2Iface);
 
-    // Default case: log any other events we don't handle
-    console.log(`ℹ️ Unhandled Orchestrator event: ${name} - ignoring`);
-    return;
+const contractSubscriptions = [
+  { name: 'Legacy Escrow', address: escrowContractAddress, handler: handleContractEvent },
+  { name: 'Escrow', address: escrowV3ContractAddress, handler: handleEscrowV3Event },
+  { name: 'EscrowV2', address: escrowV2ContractAddress, handler: handleEscrowV2Event },
+  { name: 'Orchestrator', address: orchestratorContractAddress, handler: handleOrchestratorEvent },
+  { name: 'OrchestratorV2', address: orchestratorV2ContractAddress, handler: handleOrchestratorV2Event },
+  { name: 'OrchestratorV3', address: orchestratorV3ContractAddress, handler: handleOrchestratorV3Event }
+];
 
-  } catch (err) {
-    console.error('❌ Failed to parse Orchestrator log:', err.message);
-    console.log('👀 Raw log (unparsed):', log);
-    console.log('📝 Topics received:', log.topics);
-    console.log('🔄 Continuing to listen for other events...');
-  }
-};
+const eventProvider = new ResilientWebSocketProvider(process.env.BASE_RPC, contractSubscriptions);
 
-// Initialize WebSocket provider for Escrow contract (legacy events)
-const resilientProvider = new ResilientWebSocketProvider(
-  process.env.BASE_RPC,
-  escrowContractAddress,
-  handleContractEvent
-);
+console.log('ZKP2P Telegram Bot started');
+for (const subscription of contractSubscriptions) {
+  console.log(`Monitoring ${subscription.name}: ${subscription.address}`);
+}
 
-// Initialize WebSocket provider for Orchestrator contract (v2 events)
-const orchestratorProvider = new ResilientWebSocketProvider(
-  process.env.BASE_RPC,
-  orchestratorContractAddress,
-  handleOrchestratorEvent
-);
+let isShuttingDown = false;
 
-// Initialize WebSocket provider for V3 Escrow contract
-const escrowV3Provider = new ResilientWebSocketProvider(
-  process.env.BASE_RPC,
-  escrowV3ContractAddress,
-  handleEscrowV3Event
-);
+async function gracefulShutdown(signal, exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`Received ${signal}; shutting down`);
 
-// Initialize WebSocket provider for EscrowV2 contract (NEW)
-const escrowV2Provider = new ResilientWebSocketProvider(
-  process.env.BASE_RPC,
-  escrowV2ContractAddress,
-  handleEscrowV2Event
-);
-
-// Initialize WebSocket provider for OrchestratorV2 contract (NEW)
-const orchestratorV2Provider = new ResilientWebSocketProvider(
-  process.env.BASE_RPC,
-  orchestratorV2ContractAddress,
-  handleOrchestratorV2Event
-);
-
-// Add startup message
-console.log('🤖 ZKP2P Telegram Bot Started (Supabase Integration with Auto-Reconnect + Sniper)');
-console.log('🔍 Listening for contract events...');
-console.log(`📡 Escrow Contract (v1): ${escrowContractAddress}`);
-console.log(`📡 Orchestrator Contract (v2): ${orchestratorContractAddress}`);
-console.log(`📡 Escrow Contract (v3): ${escrowV3ContractAddress}`);
-console.log(`📡 EscrowV2 Contract (NEW): ${escrowV2ContractAddress}`);
-console.log(`📡 OrchestratorV2 Contract (NEW): ${orchestratorV2ContractAddress}`);
-
-// Improved graceful shutdown with proper cleanup
-const gracefulShutdown = async (signal) => {
-  console.log(`🔄 Received ${signal}, shutting down gracefully...`);
-  
   try {
-    // Stop accepting new connections
-    if (resilientProvider) {
-      await resilientProvider.destroy();
-    }
-    
-    if (orchestratorProvider) {
-      await orchestratorProvider.destroy();
-    }
-    
-    if (escrowV3Provider) {
-      await escrowV3Provider.destroy();
-    }
-
-    if (escrowV2Provider) {
-      await escrowV2Provider.destroy();
-    }
-
-    if (orchestratorV2Provider) {
-      await orchestratorV2Provider.destroy();
-    }
-
-    // Stop the Telegram bot
-    if (bot) {
-      console.log('🛑 Stopping Telegram bot...');
-      await bot.stopPolling();
-    }
-    
-    // Close database connections (if any)
-    console.log('🛑 Cleaning up resources...');
-    
-    console.log('✅ Graceful shutdown completed');
-    process.exit(0);
-    
+    await eventProvider.destroy();
+    await bot.stopPolling();
+    console.log('Shutdown complete');
   } catch (error) {
-    console.error('❌ Error during shutdown:', error);
-    process.exit(1);
+    console.error('Shutdown failed:', error);
+    exitCode = 1;
+  } finally {
+    process.exit(exitCode);
   }
-};
+}
 
-// Enhanced error handlers
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught exception:', error);
-  console.error('Stack trace:', error.stack);
-  
-  // Attempt to restart WebSocket if it's a connection issue
-  if (error.message.includes('WebSocket') || error.message.includes('ECONNRESET')) {
-    console.log('🔄 Attempting to restart WebSocket due to connection error...');
-    if (resilientProvider) {
-      resilientProvider.restart();
-    }
-    if (orchestratorProvider) {
-      orchestratorProvider.restart();
-    }
-    if (escrowV3Provider) {
-      escrowV3Provider.restart();
-    }
-    if (escrowV2Provider) {
-      escrowV2Provider.restart();
-    }
-    if (orchestratorV2Provider) {
-      orchestratorV2Provider.restart();
-    }
-  }
+  console.error('Uncaught exception:', error);
+  void gracefulShutdown('uncaughtException', 1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled rejection at:', promise, 'reason:', reason);
-  
-  // Attempt to restart WebSocket if it's a connection issue
-  if (reason && reason.message && 
-      (reason.message.includes('WebSocket') || reason.message.includes('ECONNRESET'))) {
-    console.log('🔄 Attempting to restart WebSocket due to rejection...');
-    if (resilientProvider) {
-      resilientProvider.restart();
-    }
-    if (orchestratorProvider) {
-      orchestratorProvider.restart();
-    }
-    if (escrowV3Provider) {
-      escrowV3Provider.restart();
-    }
-    if (escrowV2Provider) {
-      escrowV2Provider.restart();
-    }
-    if (orchestratorV2Provider) {
-      orchestratorV2Provider.restart();
-    }
-  }
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
 });
 
-// Graceful shutdown handlers
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
-// Health check interval
-setInterval(async () => {
-  if (resilientProvider && !resilientProvider.isConnected) {
-    console.log('🔍 Health check: Escrow WebSocket (v1) disconnected, attempting restart...');
-    await resilientProvider.restart();
+setInterval(() => {
+  if (!eventProvider.isConnected) {
+    console.warn('Base event stream is disconnected; restarting');
+    void eventProvider.restart();
   }
-  if (orchestratorProvider && !orchestratorProvider.isConnected) {
-    console.log('🔍 Health check: Orchestrator WebSocket (v2) disconnected, attempting restart...');
-    await orchestratorProvider.restart();
-  }
-  if (escrowV3Provider && !escrowV3Provider.isConnected) {
-    console.log('🔍 Health check: Escrow WebSocket (v3) disconnected, attempting restart...');
-    await escrowV3Provider.restart();
-  }
-  if (escrowV2Provider && !escrowV2Provider.isConnected) {
-    console.log('🔍 Health check: EscrowV2 WebSocket disconnected, attempting restart...');
-    await escrowV2Provider.restart();
-  }
-  if (orchestratorV2Provider && !orchestratorV2Provider.isConnected) {
-    console.log('🔍 Health check: OrchestratorV2 WebSocket disconnected, attempting restart...');
-    await orchestratorV2Provider.restart();
-  }
-}, 120000); // Check every two minutes
+}, 120000);
 
 // Clean up stale sniper alert dedup entries every 5 minutes
 setInterval(() => {

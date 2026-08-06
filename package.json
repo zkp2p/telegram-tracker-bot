@@ -1,21 +1,26 @@
 {
   "name": "base-telegram-bot",
   "version": "1.0.0",
+  "private": true,
   "main": "bot.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "check": "node --check bot.js && node --check src/contracts.js && node --check src/resilient-websocket-provider.js",
+    "test": "node --test test.js",
     "start": "node bot.js",
     "dev": "node bot.js"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
-  "description": "",
+  "description": "Telegram alerts for ZKP2P escrow and orchestrator events on Base",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "dotenv": "^16.5.0",
     "ethers": "^6.14.1",
-    "node-telegram-bot-api": "^0.66.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "node-telegram-bot-api": "^1.2.0"
   }
 }

@@ -1,13 +1,15 @@
 # ZKP2P Telegram Tracker Bot
-Telegram bot for tracking ZKP2P deposit events on Base blockchain in real-time with advanced sniper alerts for arbitrage opportunities.
+
+Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, including the production OrchestratorV3 lifecycle.
 
 ## 🚀 Features
-- **Real-time tracking**: Monitor specific deposit IDs or listen to all deposits
+- **Full production lifecycle**: Monitors the legacy stack, Escrow/EscrowV2, and Orchestrator V1/V2/V3
+- **Efficient real-time tracking**: Routes six contract subscriptions through one resilient WebSocket connection
 - **Event notifications**: Get alerts for order creation, fulfillment, and cancellation
 - **Sniper alerts**: Automated arbitrage notifications when deposits offer better exchange rates than market
-- **Multi-platform support**: CashApp, Venmo, Revolut, Wise, and Zelle
+- **Current payment methods**: Alipay, Cash App, Chime, Mercado Pago, Monzo, PayPal, Revolut, Venmo, Wise, and Zelle
 - **Persistent storage**: User data backed by Supabase database
-- **Clean event handling**: Ignores withdrawal events to prevent spam
+- **Resilient operation**: Automatic reconnects, graceful shutdown, and isolated event-handler failures
 
 ## 📱 Commands
 
@@ -45,7 +47,7 @@ The bot monitors exchange rates and alerts you when new deposits offer better ra
 ### Environment Variables
 ```bash
 TELEGRAM_BOT_TOKEN=your_bot_token
-BASE_RPC=your_base_rpc_url  
+BASE_RPC=wss://your_base_websocket_rpc
 SUPABASE_URL=your_supabase_url
 SUPABASE_ANON_KEY=your_supabase_key
 EXCHANGE_API_KEY=your_exchange_rate_api_key
@@ -60,6 +62,16 @@ EXCHANGE_API_KEY=your_exchange_rate_api_key
 - `IntentPruned` - Orders cancelled
 - `DepositWithdrawn` - Deposits withdrawn (ignored)
 - `DepositClosed` - Deposits closed (ignored)
+
+Orchestrator V1, V2, and V3 share the lifecycle event signatures above. Contract addresses and active payment-method hashes are centralized in `src/contracts.js` and should be refreshed from the standalone `zkp2p-contracts` production deployment plus live registry state.
+
+## Development
+
+```bash
+npm install
+npm run check
+npm test
+```
 
 ## 🤝 Contributing
 This is an **open source** project! Contributions welcome:
