@@ -15,6 +15,15 @@ const {
   orchestratorAbi
 } = require('./src/contracts');
 const { createAddressRouter } = require('./src/resilient-websocket-provider');
+const {
+  buildOrderCreatedMessage,
+  buildOrderStatusMessage,
+  buildSniperMessage,
+  createPeerlyticsKeyboard,
+  formatPlatform,
+  peerlyticsDepositUrl,
+  peerlyticsIntentUrl
+} = require('./src/alerts');
 
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -177,6 +186,96 @@ describe('Platform resolution', () => {
   it('returns a safe label for malformed or unknown identifiers', () => {
     assert.equal(getPlatformName(null), 'Unknown');
     assert.match(getPlatformName('0x' + 'de'.repeat(20)), /^Unknown/);
+  });
+});
+
+describe('Human-readable alerts', () => {
+  const timestamp = Date.UTC(2026, 7, 6, 18, 42) / 1000;
+  const intentHash = '0x' + 'AB'.repeat(32);
+
+  it('summarizes a created order without protocol internals', () => {
+    const message = buildOrderCreatedMessage({
+      platform: 'venmo',
+      amount: 100000000n,
+      conversionRate: 950000000000000000n,
+      currencyCode: 'USD',
+      timestamp
+    });
+
+    assert.equal(message, [
+      '🟡 *Order created*',
+      '',
+      'A Venmo order was created to pay *$95.00 USD* for *100.00 USDC*.',
+      '*Created:* Aug 6, 2026 at 6:42 PM UTC'
+    ].join('\n'));
+    for (const noisyLabel of ['Deposit ID', 'Order ID', 'Owner', 'Block', 'BaseScan']) {
+      assert.equal(message.includes(noisyLabel), false);
+    }
+  });
+
+  it('summarizes snipe and 1:1 opportunities consistently', () => {
+    const snipe = buildSniperMessage({
+      platform: 'venmo',
+      amount: 100000000n,
+      conversionRate: 950000000000000000n,
+      currencyCode: 'USD',
+      percentageDiff: 5,
+      isOneToOne: false,
+      timestamp
+    });
+    const parity = buildSniperMessage({
+      platform: 'cashapp',
+      amount: 100000000n,
+      conversionRate: 1000000000000000000n,
+      currencyCode: 'USD',
+      percentageDiff: 0,
+      isOneToOne: true,
+      timestamp
+    });
+
+    assert.equal(snipe, [
+      '🎯 *Snipe opportunity*',
+      '',
+      'Pay *$95.00 USD* with Venmo for *100.00 USDC* at *5.0% below market*.',
+      '*Found:* Aug 6, 2026 at 6:42 PM UTC'
+    ].join('\n'));
+    assert.match(parity, /Pay \*\$100\.00 USD\* with Cash App for \*100\.00 USDC\* at the market rate\./);
+  });
+
+  it('keeps lifecycle updates concise and human-readable', () => {
+    const message = buildOrderStatusMessage({
+      status: 'fulfilled',
+      platform: 'paypal',
+      amount: 25000000n,
+      conversionRate: 1000000000000000000n,
+      currencyCode: 'USD'
+    });
+
+    assert.equal(
+      message,
+      '🟢 *Order fulfilled*\n\nThe PayPal order to pay *$25.00 USD* for *25.00 USDC* was fulfilled.'
+    );
+    assert.equal(formatPlatform('Unknown (0x1234...5678)'), 'Payment app');
+  });
+
+  it('builds canonical Peerlytics links and buttons', () => {
+    assert.equal(
+      peerlyticsIntentUrl(intentHash),
+      `https://peerlytics.xyz/explorer/intent/${intentHash.toLowerCase()}`
+    );
+    assert.equal(
+      peerlyticsDepositUrl(CONTRACT_ADDRESSES.escrowV2.toUpperCase(), 17),
+      `https://peerlytics.xyz/explorer/deposit/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}_17`
+    );
+    assert.deepEqual(
+      createPeerlyticsKeyboard(peerlyticsIntentUrl(intentHash)),
+      {
+        inline_keyboard: [[{
+          text: 'View on Peerlytics',
+          url: `https://peerlytics.xyz/explorer/intent/${intentHash.toLowerCase()}`
+        }]]
+      }
+    );
   });
 });
 

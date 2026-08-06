@@ -12,6 +12,14 @@ const {
   modernOrchestratorAbi,
   orchestratorAbi
 } = require('./src/contracts');
+const {
+  buildOrderCreatedMessage,
+  buildOrderStatusMessage,
+  buildSniperMessage,
+  createPeerlyticsKeyboard,
+  peerlyticsDepositUrl,
+  peerlyticsIntentUrl
+} = require('./src/alerts');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 
 // Supabase setup
@@ -702,18 +710,18 @@ async function processCompletedTransaction(txHash) {
 
       const rawIntent = txData.rawIntents.get(intentHash);
       if (rawIntent?.eventType === 'orchestrator') {
-        await sendOrchestratorPrunedNotification(rawIntent, txHash);
+        await sendOrchestratorPrunedNotification(rawIntent);
       } else if (rawIntent) {
-        await sendPrunedNotification(rawIntent, txHash);
+        await sendPrunedNotification(rawIntent);
       }
     }
 
     for (const intentHash of txData.fulfilled) {
       const rawIntent = txData.rawIntents.get(intentHash);
       if (rawIntent?.eventType === 'orchestrator') {
-        await sendOrchestratorFulfilledNotification(rawIntent, txHash);
+        await sendOrchestratorFulfilledNotification(rawIntent);
       } else if (rawIntent) {
-        await sendFulfilledNotification(rawIntent, txHash);
+        await sendFulfilledNotification(rawIntent);
       }
     }
   } finally {
@@ -721,44 +729,30 @@ async function processCompletedTransaction(txHash) {
   }
 }
 
-async function sendFulfilledNotification(rawIntent, txHash) {
-  const { depositId, verifier, owner, to, amount, sustainabilityFee, verifierFee, intentHash } = rawIntent;
-  const platformName = getPlatformName(verifier);
-
+async function sendFulfilledNotification(rawIntent) {
+  const { depositId, verifier, amount, intentHash } = rawIntent;
   const storedDetails = intentDetails.get(intentHash.toLowerCase());
-  let rateText = '';
-  if (storedDetails) {
-    const fiatCode = getFiatCode(storedDetails.fiatCurrency);
-    const formattedRate = formatConversionRate(storedDetails.conversionRate, fiatCode);
-    rateText = `\n- *Rate:* ${formattedRate}`;
-  
-  // Clean up memory after use
   intentDetails.delete(intentHash.toLowerCase());
-  }
   
   const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
   if (interestedUsers.length === 0) return;
   
   console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
   
-  const message = `
-🟢 *Order Fulfilled*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Platform:* ${platformName}
-- *Owner:* \`${owner}\`
-- *To:* \`${to}\`
-- *Amount:* ${formatUSDC(amount)} USDC${rateText}
-- *Sustainability Fee:* ${formatUSDC(sustainabilityFee)} USDC
-- *Verifier Fee:* ${formatUSDC(verifierFee)} USDC
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-`.trim();
+  const message = buildOrderStatusMessage({
+    status: 'fulfilled',
+    platform: getPlatformName(storedDetails?.verifier || verifier),
+    amount,
+    conversionRate: storedDetails?.conversionRate,
+    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null
+  });
+  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+    components: linkButton('View on Peerlytics', peerlyticsUrl)
   });
 
 
@@ -769,7 +763,7 @@ async function sendFulfilledNotification(rawIntent, txHash) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createDepositKeyboard(depositId)
+      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -778,28 +772,30 @@ async function sendFulfilledNotification(rawIntent, txHash) {
   }
 }
 
-async function sendPrunedNotification(rawIntent, txHash) {
+async function sendPrunedNotification(rawIntent) {
   const { depositId, intentHash } = rawIntent;
+  const storedDetails = intentDetails.get(intentHash.toLowerCase());
+  intentDetails.delete(intentHash.toLowerCase());
   
   const interestedUsers = await db.getUsersInterestedInDeposit(depositId);
   if (interestedUsers.length === 0) return;
   
   console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
   
-  const message = `
-🟠 *Order Cancelled*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-
-*Order was cancelled*
-`.trim();
+  const message = buildOrderStatusMessage({
+    status: 'cancelled',
+    platform: getPlatformName(storedDetails?.verifier),
+    amount: storedDetails?.amount,
+    conversionRate: storedDetails?.conversionRate,
+    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null
+  });
+  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+    components: linkButton('View on Peerlytics', peerlyticsUrl)
   });
 
 
@@ -810,7 +806,7 @@ async function sendPrunedNotification(rawIntent, txHash) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createDepositKeyboard(depositId)
+      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -819,8 +815,8 @@ async function sendPrunedNotification(rawIntent, txHash) {
   }
 }
 
-async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
-  const { intentHash, fundsTransferredTo, amount, isManualRelease } = rawIntent;
+async function sendOrchestratorFulfilledNotification(rawIntent) {
+  const { intentHash, amount } = rawIntent;
   const intentHashLower = intentHash.toLowerCase();
   
   // Get stored intent details
@@ -830,24 +826,12 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
     return;
   }
   
-  // Also try intentDetails for backward compatibility
   const oldIntentDetails = intentDetails.get(intentHashLower);
-  const verifier = storedDetails.escrow || oldIntentDetails?.verifier || 'Unknown';
-  
   const depositId = storedDetails.depositId;
-  const { owner, fiatCurrency, conversionRate, paymentMethod } = storedDetails;
+  const { fiatCurrency, conversionRate, paymentMethod } = storedDetails;
   
   // Try to get platform name from payment method first (Orchestrator v2/v3), fallback to verifier address
-  const platformName = paymentMethod ? getPlatformName(paymentMethod) : getPlatformName(verifier);
-  const contractLabel = storedDetails.contractLabel || '';
-
-  let rateText = '';
-  if (oldIntentDetails || storedDetails.fiatCurrency) {
-    const fiatCode = getFiatCode(storedDetails.fiatCurrency);
-    const formattedRate = formatConversionRate(storedDetails.conversionRate || 0n, fiatCode);
-    rateText = `\n- *Rate:* ${formattedRate}`;
-  }
-
+  const platformName = getPlatformName(paymentMethod || oldIntentDetails?.verifier);
   orchestratorIntentDetails.delete(intentHashLower);
   intentDetails.delete(intentHashLower);
 
@@ -856,23 +840,20 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
 
   console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
 
-  const message = `
-🟢 *Order Fulfilled${contractLabel}*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Platform:* ${platformName}
-- *Owner:* \`${owner}\`
-- *To:* \`${fundsTransferredTo}\`
-- *Amount:* ${formatUSDC(amount)} USDC${rateText}
-- *Manual Release:* ${isManualRelease ? 'Yes' : 'No'}
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-`.trim();
+  const message = buildOrderStatusMessage({
+    status: 'fulfilled',
+    platform: platformName,
+    amount,
+    conversionRate,
+    currencyCode: getFiatCode(fiatCurrency)
+  });
+  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+    components: linkButton('View on Peerlytics', peerlyticsUrl)
   });
 
   for (const chatId of interestedUsers) {
@@ -882,7 +863,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createDepositKeyboard(depositId)
+      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -891,7 +872,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, txHash) {
   }
 }
 
-async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
+async function sendOrchestratorPrunedNotification(rawIntent) {
   const { intentHash } = rawIntent;
   const intentHashLower = intentHash.toLowerCase();
   
@@ -903,8 +884,6 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
   }
   
   const depositId = storedDetails.depositId;
-  const contractLabel = storedDetails.contractLabel || '';
-
   orchestratorIntentDetails.delete(intentHashLower);
   intentDetails.delete(intentHashLower);
 
@@ -913,20 +892,20 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
 
   console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
 
-  const message = `
-🟠 *Order Cancelled${contractLabel}*
-- *Deposit ID:* \`${depositId}\`
-- *Order ID:* \`${intentHash}\`
-- *Tx:* [View on BaseScan](${txLink(txHash)})
-
-*Order was cancelled*
-`.trim();
+  const message = buildOrderStatusMessage({
+    status: 'cancelled',
+    platform: getPlatformName(storedDetails.paymentMethod || storedDetails.escrow),
+    amount: storedDetails.amount,
+    conversionRate: storedDetails.conversionRate,
+    currencyCode: getFiatCode(storedDetails.fiatCurrency)
+  });
+  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton(`🔗 View Deposit ${depositId}`, txLink(txHash) || depositLink(depositId))
+    components: linkButton('View on Peerlytics', peerlyticsUrl)
   });
 
   for (const chatId of interestedUsers) {
@@ -936,7 +915,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createDepositKeyboard(depositId)
+      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -950,9 +929,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, txHash) {
 
 // Helper functions
 const formatUSDC = (amount) => (Number(amount) / 1e6).toFixed(2);
-const formatTimestamp = (ts) => new Date(Number(ts) * 1000).toUTCString();
 const txLink = (hash) => `https://basescan.org/tx/${hash}`;
-const depositLink = (id) => `https://www.zkp2p.xyz/deposit/${id}`;
 
 const currencyHashToCode = {
   '0x4dab77a640748de8588de6834d814a344372b205265984b969f3e97060955bfa': 'AED',
@@ -991,21 +968,8 @@ const currencyHashToCode = {
 
 const getFiatCode = (hash) => currencyHashToCode[hash.toLowerCase()] || '❓ Unknown';
 
-const formatConversionRate = (conversionRate, fiatCode) => {
-  const rate = (Number(conversionRate) / 1e18).toFixed(6);
-  return `${rate} ${fiatCode} / USDC`;
-};
-
-const createDepositKeyboard = (depositId) => {
-  return {
-    inline_keyboard: [[
-      {
-        text: `🔗 View Deposit ${depositId}`,
-        url: depositLink(depositId)
-      }
-    ]]
-  };
-};
+const createDepositKeyboard = (depositId, escrowAddress = escrowContractAddress) =>
+  createPeerlyticsKeyboard(peerlyticsDepositUrl(escrowAddress, depositId));
 
 // Fetch rate from oracle adapter contract
 async function getOracleRate(adapterAddress, adapterConfig) {
@@ -1025,10 +989,17 @@ async function getOracleRate(adapterAddress, adapterConfig) {
 }
 
 // Sniper logic
-async function checkSniperOpportunity(depositId, depositAmount, currencyHash, conversionRate, verifierAddress) {
+async function checkSniperOpportunity(
+  depositId,
+  depositAmount,
+  currencyHash,
+  conversionRate,
+  verifierAddress,
+  escrowAddress
+) {
   // Dedup: skip if we already alerted this deposit+currency in the last 30s
   const now = Date.now();
-  const dedupKey = `${depositId}-${currencyHash}`;
+  const dedupKey = `${String(escrowAddress).toLowerCase()}-${depositId}-${currencyHash}`;
   const lastAlert = recentSniperAlerts.get(dedupKey);
   if (lastAlert && now - lastAlert < 30000) {
     console.log(`⏭️ Skipping duplicate sniper check for deposit ${depositId} (alerted ${((now - lastAlert) / 1000).toFixed(1)}s ago)`);
@@ -1098,8 +1069,6 @@ if (interestedUsers.length > 0) {
   
   for (const chatId of interestedUsers) {
     const userThreshold = await db.getUserThreshold(chatId);
-    
-    const formattedAmount = (Number(depositAmount) / 1e6).toFixed(2);
     const isOneToOne = Math.abs(percentageDiff) < 0.1; // Within 0.1% of market rate = parity
 
     // 1:1 deposits always alert (bypass threshold), otherwise check user threshold
@@ -1110,47 +1079,23 @@ if (interestedUsers.length > 0) {
     if (shouldAlert) {
       console.log(`🎯 ${isOneToOne ? '1:1 DEPOSIT' : 'SNIPER OPPORTUNITY'} for user ${chatId}! diff=${percentageDiff.toFixed(2)}%`);
 
-      let message;
-      if (isOneToOne) {
-        message = `
-🚨 *1:1 DEPOSIT - ${currencyCode}*
-🏦 *Platform:* ${platformName}
-📊 Deposit #${depositId}: ${formattedAmount} USDC
-💰 Rate: ${depositRate.toFixed(4)} ${currencyCode}/USD
-
-🔥 *ZERO PREMIUM, onramp at 1:1 right now!*
-⚡ ${formattedAmount} USDC available on ${platformName} at exact market rate. Be fast!
-`.trim();
-      } else {
-        message = `
-🎯 *SNIPER ALERT - ${currencyCode}*
-🏦 *Platform:* ${platformName}
-📊 New Deposit #${depositId}: ${formattedAmount} USDC
-💰 Deposit Rate: ${depositRate.toFixed(4)} ${currencyCode}/USD
-📈 Market Rate: ${marketRate.toFixed(4)} ${currencyCode}/USD
-🔥 ${percentageDiff.toFixed(1)}% BETTER than market!
-
-💵 *If you filled this entire order:*
-- You'd pay: ${(Number(depositAmount) / 1e6 * depositRate).toFixed(2)} ${currencyCode}
-- Market cost: ${(Number(depositAmount) / 1e6 * marketRate).toFixed(2)} ${currencyCode}
-- **You save: ${((Number(depositAmount) / 1e6) * (marketRate - depositRate)).toFixed(2)} ${currencyCode}**
-
-*You get ${currencyCode} at ${percentageDiff.toFixed(1)}% discount on ${platformName}!*
-`.trim();
-      }
+      const message = buildSniperMessage({
+        platform: platformName,
+        amount: depositAmount,
+        conversionRate,
+        currencyCode,
+        percentageDiff,
+        isOneToOne,
+        timestamp: new Date(now)
+      });
+      const peerlyticsUrl = peerlyticsDepositUrl(escrowAddress, depositId);
 
       await db.logSniperAlert(chatId, depositId, currencyCode, depositRate, marketRate, percentageDiff);
 
 const sendOptions = {
   parse_mode: 'Markdown',
-  reply_markup: {
-    inline_keyboard: [[
-      {
-        text: isOneToOne ? `⚖️ View Deposit ${depositId}` : `🔗 Snipe Deposit ${depositId}`,
-        url: depositLink(depositId)
-      }
-    ]]
-  }
+  disable_web_page_preview: true,
+  reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
 };
 
 // 1:1 alerts go to the main deposit channels, sniper alerts go to sniper channels
@@ -1162,14 +1107,11 @@ await postToDiscord({
   webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
   threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
   content: toDiscordMarkdown(message),
-  components: linkButton(
-    isOneToOne ? `⚖️ View Deposit ${depositId}` : `🔗 Snipe Deposit ${depositId}`,
-    depositLink(depositId)
-  )
+  components: linkButton('View on Peerlytics', peerlyticsUrl)
 });
 
 
-bot.sendMessage(chatId, message, sendOptions);
+await bot.sendMessage(chatId, message, sendOptions);
     } else {
       console.log(`📊 No opportunity for user ${chatId}: ${percentageDiff.toFixed(2)}% < ${userThreshold}%`);
     }
@@ -1521,16 +1463,20 @@ const handleContractEvent = async (log) => {
     const { name } = parsed;
 
     if (name === 'IntentSignaled') {
-      const { intentHash, depositId, verifier, owner, to, amount, fiatCurrency, conversionRate, timestamp } = parsed.args;    
+      const { intentHash, depositId, verifier, amount, fiatCurrency, conversionRate, timestamp } = parsed.args;
       const id = Number(depositId);
       const fiatCode = getFiatCode(fiatCurrency);
-      const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
       const platformName = getPlatformName(verifier);
-      const formattedRate = formatConversionRate(conversionRate, fiatCode);
       
       console.log('🧪 IntentSignaled depositId:', id);
       
-      intentDetails.set(intentHash.toLowerCase(), { fiatCurrency, conversionRate, verifier });
+      intentDetails.set(intentHash.toLowerCase(), {
+        fiatCurrency,
+        conversionRate,
+        verifier,
+        amount,
+        timestamp
+      });
       
       const interestedUsers = await db.getUsersInterestedInDeposit(id);
       if (interestedUsers.length === 0) {
@@ -1540,26 +1486,20 @@ const handleContractEvent = async (log) => {
 
       console.log(`📤 Sending to ${interestedUsers.length} users interested in deposit ${id}`);
 
-      const message = `
-🟡 *Order Created*
-• *Deposit ID:* \`${id}\`
-• *Order ID:* \`${intentHash}\`
-• *Platform:* ${platformName}
-• *Owner:* \`${owner}\`
-• *To:* \`${to}\`
-• *Amount:* ${formatUSDC(amount)} USDC
-• *Fiat Amount:* ${fiatAmount} ${fiatCode} 
-• *Rate:* ${formattedRate}
-• *Time:* ${formatTimestamp(timestamp)}
-• *Block:* ${log.blockNumber}
-• *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
-`.trim();
+      const message = buildOrderCreatedMessage({
+        platform: platformName,
+        amount,
+        conversionRate,
+        currencyCode: fiatCode,
+        timestamp
+      });
+      const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
       await postToDiscord({
         webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
         threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
         content: toDiscordMarkdown(message),
-        components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
+        components: linkButton('View on Peerlytics', peerlyticsUrl)
       });
 
 
@@ -1570,7 +1510,7 @@ const handleContractEvent = async (log) => {
         const sendOptions = { 
           parse_mode: 'Markdown', 
           disable_web_page_preview: true,
-          reply_markup: createDepositKeyboard(id)
+          reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
         };
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -1694,7 +1634,14 @@ if (name === 'DepositCurrencyRateUpdated') {
   const depositAmount = await db.getDepositAmount(id);
   if (depositAmount > 0) {
     console.log(`🎯 Rechecking sniper opportunity due to rate update for deposit ${id}`);
-    await checkSniperOpportunity(id, depositAmount, currency, conversionRate, verifier);
+    await checkSniperOpportunity(
+      id,
+      depositAmount,
+      currency,
+      conversionRate,
+      verifier,
+      escrowContractAddress
+    );
   }
   return;
 }
@@ -1712,7 +1659,14 @@ if (name === 'DepositConversionRateUpdated') {
   const depositAmount = await db.getDepositAmount(id);
   if (depositAmount > 0) {
     console.log(`🎯 Rechecking sniper opportunity due to conversion rate update for deposit ${id}`);
-    await checkSniperOpportunity(id, depositAmount, currency, newConversionRate, verifier);
+    await checkSniperOpportunity(
+      id,
+      depositAmount,
+      currency,
+      newConversionRate,
+      verifier,
+      escrowContractAddress
+    );
   }
   return;
 }
@@ -1756,7 +1710,14 @@ if (name === 'DepositVerifierAdded') {
     }
     
     // Check for sniper opportunity with real amount
-    await checkSniperOpportunity(id, depositAmount, currency, conversionRate, verifier);
+    await checkSniperOpportunity(
+      id,
+      depositAmount,
+      currency,
+      conversionRate,
+      verifier,
+      escrowContractAddress
+    );
   return;
   }
 
@@ -1827,7 +1788,14 @@ const handleEscrowV3Event = async (log) => {
         return;
       }
 
-      await checkSniperOpportunity(id, depositAmount, currency, minConversionRate, paymentMethod);
+      await checkSniperOpportunity(
+        id,
+        depositAmount,
+        currency,
+        minConversionRate,
+        paymentMethod,
+        escrowV3ContractAddress
+      );
       return;
     }
 
@@ -1900,7 +1868,14 @@ const handleEscrowV2Event = async (log) => {
         return;
       }
 
-      await checkSniperOpportunity(id, depositAmount, currency, minConversionRate, paymentMethod);
+      await checkSniperOpportunity(
+        id,
+        depositAmount,
+        currency,
+        minConversionRate,
+        paymentMethod,
+        escrowV2ContractAddress
+      );
       return;
     }
 
@@ -1913,7 +1888,14 @@ const handleEscrowV2Event = async (log) => {
 
       const depositAmount = escrowV2DepositAmounts.get(id) || 0;
       if (depositAmount > 0) {
-        await checkSniperOpportunity(id, depositAmount, currency, newMinConversionRate, paymentMethod);
+        await checkSniperOpportunity(
+          id,
+          depositAmount,
+          currency,
+          newMinConversionRate,
+          paymentMethod,
+          escrowV2ContractAddress
+        );
       }
       return;
     }
@@ -1947,7 +1929,14 @@ const handleEscrowV2Event = async (log) => {
       console.log(`📊 Oracle effective rate for deposit ${id}: ${effectiveRate} (oracle: ${oracleRate}, spread: ${spread}bps)`);
 
       // Pass effective rate to sniper check (already in 1e18 format)
-      await checkSniperOpportunity(id, depositAmount, currencyCode, effectiveRate, paymentMethod);
+      await checkSniperOpportunity(
+        id,
+        depositAmount,
+        currencyCode,
+        effectiveRate,
+        paymentMethod,
+        escrowV2ContractAddress
+      );
       return;
     }
 
@@ -2024,8 +2013,6 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
         } = parsed.args;
         const id = Number(depositId);
         const intentHashLower = intentHash.toLowerCase();
-        const contractLabel = sourceLabel === 'O1' ? '' : ` (${sourceLabel})`;
-
         orchestratorIntentDetails.set(intentHashLower, {
           depositId: id,
           escrow,
@@ -2035,40 +2022,34 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           amount,
           fiatCurrency,
           conversionRate,
-          timestamp,
-          contractLabel
+          timestamp
         });
         intentDetails.set(intentHashLower, {
           fiatCurrency,
           conversionRate,
-          verifier: paymentMethod
+          verifier: paymentMethod,
+          amount,
+          timestamp
         });
 
         const interestedUsers = await db.getUsersInterestedInDeposit(id);
         if (interestedUsers.length === 0) return;
 
         const fiatCode = getFiatCode(fiatCurrency);
-        const fiatAmount = ((Number(amount) / 1e6) * (Number(conversionRate) / 1e18)).toFixed(2);
-        const message = `
-🟡 *Order Created${contractLabel}*
-• *Deposit ID:* \`${id}\`
-• *Order ID:* \`${intentHash}\`
-• *Platform:* ${getPlatformName(paymentMethod)}
-• *Owner:* \`${owner}\`
-• *To:* \`${to}\`
-• *Amount:* ${formatUSDC(amount)} USDC
-• *Fiat Amount:* ${fiatAmount} ${fiatCode}
-• *Rate:* ${formatConversionRate(conversionRate, fiatCode)}
-• *Time:* ${formatTimestamp(timestamp)}
-• *Block:* ${log.blockNumber}
-• *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
-`.trim();
+        const message = buildOrderCreatedMessage({
+          platform: getPlatformName(paymentMethod),
+          amount,
+          conversionRate,
+          currencyCode: fiatCode,
+          timestamp
+        });
+        const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
         await postToDiscord({
           webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
           threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
           content: toDiscordMarkdown(message),
-          components: linkButton(`🔗 View Deposit ${id}`, depositLink(id))
+          components: linkButton('View on Peerlytics', peerlyticsUrl)
         });
 
         await Promise.all(interestedUsers.map(async (chatId) => {
@@ -2077,7 +2058,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           const sendOptions = {
             parse_mode: 'Markdown',
             disable_web_page_preview: true,
-            reply_markup: createDepositKeyboard(id)
+            reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
           await bot.sendMessage(chatId, message, sendOptions);

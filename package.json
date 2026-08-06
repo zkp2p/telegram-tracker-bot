@@ -4,7 +4,7 @@
   "private": true,
   "main": "bot.js",
   "scripts": {
-    "check": "node --check bot.js && node --check src/contracts.js && node --check src/resilient-websocket-provider.js",
+    "check": "node --check bot.js && node --check src/alerts.js && node --check src/contracts.js && node --check src/resilient-websocket-provider.js",
     "test": "node --test test.js",
     "start": "node bot.js",
     "dev": "node bot.js"
