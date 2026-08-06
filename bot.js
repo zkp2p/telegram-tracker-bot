@@ -19,7 +19,7 @@ const {
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
-  peerlyticsDepositUrl,
+  createTakeOnWebKeyboard,
   peerlyticsIntentUrl
 } = require('./src/alerts');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
@@ -1084,22 +1084,20 @@ if (interestedUsers.length > 0) {
       console.log(`🎯 ${isOneToOne ? '1:1 DEPOSIT' : 'SNIPER OPPORTUNITY'} for user ${chatId}! diff=${percentageDiff.toFixed(2)}%`);
 
       const message = buildSniperMessage({
-        platform: platformName,
         amount: depositAmount,
         conversionRate,
+        marketRate,
         currencyCode,
-        percentageDiff,
         isOneToOne,
         timestamp: new Date(now)
       });
-      const peerlyticsUrl = peerlyticsDepositUrl(escrowAddress, depositId);
 
       await db.logSniperAlert(chatId, depositId, currencyCode, depositRate, marketRate, percentageDiff);
 
 const sendOptions = {
   parse_mode: 'Markdown',
   disable_web_page_preview: true,
-  reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+  reply_markup: createTakeOnWebKeyboard()
 };
 
 // 1:1 alerts go to the main deposit channels, sniper alerts go to sniper channels
@@ -1111,7 +1109,7 @@ await postToDiscord({
   webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
   threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
   content: toDiscordMarkdown(message),
-  components: linkButton('View on Peerlytics', peerlyticsUrl)
+  components: linkButton('Take on web', PEER_DEPOSITS_URL)
 });
 
 
