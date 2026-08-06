@@ -23,10 +23,12 @@ const {
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
   createTakeOnWebKeyboard,
+  formatElapsedTime,
   formatPlatform,
   peerlyticsDepositUrl,
   peerlyticsIntentUrl
 } = require('./src/alerts');
+const { resolveBlockTimestamp } = require('./src/chain');
 
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -54,6 +56,26 @@ describe('Runtime dependencies', () => {
   it('reports successful Telegram deliveries', async () => {
     const notify = createTelegramNotifier({ sendMessage: async () => ({ message_id: 1 }) });
     assert.equal(await notify(123, 'hello', {}, 'test alert'), true);
+  });
+});
+
+describe('Block timestamp resolution', () => {
+  it('uses the terminal event block timestamp', async () => {
+    const provider = { getBlock: async (blockNumber) => ({ number: blockNumber, timestamp: 123456 }) };
+    assert.equal(await resolveBlockTimestamp(provider, 99), 123456);
+  });
+
+  it('falls back without dropping alerts when the RPC lookup fails', async () => {
+    const warnings = [];
+    const provider = { getBlock: async () => { throw new Error('RPC unavailable'); } };
+    const timestamp = await resolveBlockTimestamp(provider, 99, {
+      fallbackTimestamp: 654321,
+      logger: { warn: (...args) => warnings.push(args) }
+    });
+
+    assert.equal(timestamp, 654321);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0][0], /block 99/);
   });
 });
 
@@ -292,18 +314,45 @@ describe('Human-readable alerts', () => {
   });
 
   it('keeps lifecycle updates concise and human-readable', () => {
-    const message = buildOrderStatusMessage({
+    const eventTimestamp = Date.UTC(2026, 7, 6, 20, 7) / 1000;
+    const fulfilled = buildOrderStatusMessage({
       status: 'fulfilled',
       platform: 'paypal',
       amount: 25000000n,
       conversionRate: 1000000000000000000n,
-      currencyCode: 'USD'
+      currencyCode: 'USD',
+      signalTimestamp: timestamp,
+      eventTimestamp
+    });
+    const cancelled = buildOrderStatusMessage({
+      status: 'cancelled',
+      platform: 'wise',
+      amount: 25000000n,
+      conversionRate: 1000000000000000000n,
+      currencyCode: 'USD',
+      signalTimestamp: timestamp,
+      eventTimestamp
     });
 
-    assert.equal(
-      message,
-      '🟢 *Order fulfilled*\n\nThe PayPal order to pay *$25.00 USD* for *25.00 USDC* was fulfilled.'
-    );
+    assert.equal(fulfilled, [
+      '🟢 *Order fulfilled*',
+      '',
+      '*Platform:* PayPal',
+      '*From:* $25.00 USD 🇺🇸',
+      '*To:* 25.00 USDC',
+      '*At:* Aug 6, 2026 at 8:07 PM UTC',
+      '*Fulfilled in:* 1h 25m'
+    ].join('\n'));
+    assert.equal(cancelled, [
+      '🟠 *Order cancelled*',
+      '',
+      '*Platform:* Wise',
+      '*From:* $25.00 USD 🇺🇸',
+      '*To:* 25.00 USDC',
+      '*At:* Aug 6, 2026 at 8:07 PM UTC'
+    ].join('\n'));
+    assert.equal(formatElapsedTime(timestamp, timestamp + 300), '5m');
+    assert.equal(formatElapsedTime(timestamp, timestamp + 30), '<1m');
     assert.equal(formatPlatform('Unknown (0x1234...5678)'), 'Payment app');
   });
 

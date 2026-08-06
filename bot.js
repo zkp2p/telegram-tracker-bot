@@ -19,9 +19,9 @@ const {
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
-  createTakeOnWebKeyboard,
-  peerlyticsIntentUrl
+  createTakeOnWebKeyboard
 } = require('./src/alerts');
+const { resolveBlockTimestamp } = require('./src/chain');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
 
@@ -704,6 +704,7 @@ async function processCompletedTransaction(txHash) {
   
   try {
     console.log(`🔄 Processing completed transaction ${txHash}`);
+    const eventTimestamp = await resolveBlockTimestamp(baseHttpProvider, txData.blockNumber);
 
     // Process pruned intents first, but skip if also fulfilled
     for (const intentHash of txData.pruned) {
@@ -714,18 +715,18 @@ async function processCompletedTransaction(txHash) {
 
       const rawIntent = txData.rawIntents.get(intentHash);
       if (rawIntent?.eventType === 'orchestrator') {
-        await sendOrchestratorPrunedNotification(rawIntent);
+        await sendOrchestratorPrunedNotification(rawIntent, eventTimestamp);
       } else if (rawIntent) {
-        await sendPrunedNotification(rawIntent);
+        await sendPrunedNotification(rawIntent, eventTimestamp);
       }
     }
 
     for (const intentHash of txData.fulfilled) {
       const rawIntent = txData.rawIntents.get(intentHash);
       if (rawIntent?.eventType === 'orchestrator') {
-        await sendOrchestratorFulfilledNotification(rawIntent);
+        await sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp);
       } else if (rawIntent) {
-        await sendFulfilledNotification(rawIntent);
+        await sendFulfilledNotification(rawIntent, eventTimestamp);
       }
     }
   } finally {
@@ -733,7 +734,7 @@ async function processCompletedTransaction(txHash) {
   }
 }
 
-async function sendFulfilledNotification(rawIntent) {
+async function sendFulfilledNotification(rawIntent, eventTimestamp) {
   const { depositId, verifier, amount, intentHash } = rawIntent;
   const storedDetails = intentDetails.get(intentHash.toLowerCase());
   intentDetails.delete(intentHash.toLowerCase());
@@ -748,15 +749,16 @@ async function sendFulfilledNotification(rawIntent) {
     platform: getPlatformName(storedDetails?.verifier || verifier),
     amount,
     conversionRate: storedDetails?.conversionRate,
-    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null
+    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null,
+    signalTimestamp: storedDetails?.timestamp,
+    eventTimestamp
   });
-  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peerlytics', peerlyticsUrl)
+    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
   });
 
 
@@ -767,7 +769,7 @@ async function sendFulfilledNotification(rawIntent) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+      reply_markup: createPeerDepositsKeyboard()
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -776,7 +778,7 @@ async function sendFulfilledNotification(rawIntent) {
   }
 }
 
-async function sendPrunedNotification(rawIntent) {
+async function sendPrunedNotification(rawIntent, eventTimestamp) {
   const { depositId, intentHash } = rawIntent;
   const storedDetails = intentDetails.get(intentHash.toLowerCase());
   intentDetails.delete(intentHash.toLowerCase());
@@ -791,15 +793,16 @@ async function sendPrunedNotification(rawIntent) {
     platform: getPlatformName(storedDetails?.verifier),
     amount: storedDetails?.amount,
     conversionRate: storedDetails?.conversionRate,
-    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null
+    currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null,
+    signalTimestamp: storedDetails?.timestamp,
+    eventTimestamp
   });
-  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peerlytics', peerlyticsUrl)
+    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
   });
 
 
@@ -810,7 +813,7 @@ async function sendPrunedNotification(rawIntent) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+      reply_markup: createPeerDepositsKeyboard()
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -819,7 +822,7 @@ async function sendPrunedNotification(rawIntent) {
   }
 }
 
-async function sendOrchestratorFulfilledNotification(rawIntent) {
+async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) {
   const { intentHash, amount } = rawIntent;
   const intentHashLower = intentHash.toLowerCase();
   
@@ -849,15 +852,16 @@ async function sendOrchestratorFulfilledNotification(rawIntent) {
     platform: platformName,
     amount,
     conversionRate,
-    currencyCode: getFiatCode(fiatCurrency)
+    currencyCode: getFiatCode(fiatCurrency),
+    signalTimestamp: storedDetails.timestamp,
+    eventTimestamp
   });
-  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peerlytics', peerlyticsUrl)
+    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
   });
 
   for (const chatId of interestedUsers) {
@@ -867,7 +871,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+      reply_markup: createPeerDepositsKeyboard()
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -876,7 +880,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent) {
   }
 }
 
-async function sendOrchestratorPrunedNotification(rawIntent) {
+async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
   const { intentHash } = rawIntent;
   const intentHashLower = intentHash.toLowerCase();
   
@@ -901,15 +905,16 @@ async function sendOrchestratorPrunedNotification(rawIntent) {
     platform: getPlatformName(storedDetails.paymentMethod || storedDetails.escrow),
     amount: storedDetails.amount,
     conversionRate: storedDetails.conversionRate,
-    currencyCode: getFiatCode(storedDetails.fiatCurrency)
+    currencyCode: getFiatCode(storedDetails.fiatCurrency),
+    signalTimestamp: storedDetails.timestamp,
+    eventTimestamp
   });
-  const peerlyticsUrl = peerlyticsIntentUrl(intentHash);
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peerlytics', peerlyticsUrl)
+    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
   });
 
   for (const chatId of interestedUsers) {
@@ -919,7 +924,7 @@ async function sendOrchestratorPrunedNotification(rawIntent) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
+      reply_markup: createPeerDepositsKeyboard()
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;

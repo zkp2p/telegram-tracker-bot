@@ -123,6 +123,17 @@ function formatAlertTime(timestamp) {
   return `${datePart} at ${timePart} UTC`;
 }
 
+function formatElapsedTime(startTimestamp, endTimestamp) {
+  const elapsedSeconds = Math.max(0, Number(endTimestamp) - Number(startTimestamp));
+  const totalMinutes = Math.floor(elapsedSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (totalMinutes > 0) return `${totalMinutes}m`;
+  return '<1m';
+}
+
 function peerlyticsIntentUrl(intentHash) {
   const normalized = String(intentHash || '').trim().toLowerCase();
   return normalized
@@ -191,22 +202,32 @@ function buildOrderStatusMessage({
   platform,
   amount,
   conversionRate,
-  currencyCode
+  currencyCode,
+  signalTimestamp,
+  eventTimestamp
 }) {
   const fulfilled = status === 'fulfilled';
   const title = fulfilled ? '🟢 *Order fulfilled*' : '🟠 *Order cancelled*';
-  const verb = fulfilled ? 'fulfilled' : 'cancelled';
   const hasAmounts = amount != null && conversionRate != null && currencyCode;
+  const lines = [title, ''];
 
   if (!hasAmounts) {
-    return `${title}\n\nThe order was ${verb}.`;
+    lines.push(`*At:* ${formatAlertTime(eventTimestamp)}`);
+    return lines.join('\n');
   }
 
-  return [
-    title,
-    '',
-    `The ${formatPlatform(platform)} order to pay *${formatFiatAmount(amount, conversionRate, currencyCode)}* for *${formatUSDCAmount(amount)}* was ${verb}.`
-  ].join('\n');
+  lines.push(
+    `*Platform:* ${formatPlatform(platform)}`,
+    `*From:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${getCurrencyEmoji(currencyCode)}`,
+    `*To:* ${formatUSDCAmount(amount)}`,
+    `*At:* ${formatAlertTime(eventTimestamp)}`
+  );
+
+  if (fulfilled && signalTimestamp != null && eventTimestamp != null) {
+    lines.push(`*Fulfilled in:* ${formatElapsedTime(signalTimestamp, eventTimestamp)}`);
+  }
+
+  return lines.join('\n');
 }
 
 function buildSniperMessage({
@@ -257,6 +278,7 @@ module.exports = {
   createPeerlyticsKeyboard,
   createTakeOnWebKeyboard,
   formatAlertTime,
+  formatElapsedTime,
   formatFiatAmount,
   formatFiatValue,
   formatPlatform,
