@@ -15,6 +15,7 @@ const {
   orchestratorAbi
 } = require('./src/contracts');
 const { createAddressRouter } = require('./src/resilient-websocket-provider');
+const { createTelegramNotifier } = require('./src/telegram');
 const {
   buildOrderCreatedMessage,
   buildOrderStatusMessage,
@@ -34,6 +35,23 @@ describe('Runtime dependencies', () => {
     assert.equal(typeof client.onText, 'function');
     assert.equal(typeof client.sendMessage, 'function');
     assert.equal(typeof client.stopPolling, 'function');
+  });
+
+  it('isolates Telegram recipient failures', async () => {
+    const errors = [];
+    const notify = createTelegramNotifier(
+      { sendMessage: async () => { throw new Error('400 chat not found'); } },
+      { error: (...args) => errors.push(args) }
+    );
+
+    assert.equal(await notify(123, 'hello', {}, 'test alert'), false);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0][0], /test alert.*123/);
+  });
+
+  it('reports successful Telegram deliveries', async () => {
+    const notify = createTelegramNotifier({ sendMessage: async () => ({ message_id: 1 }) });
+    assert.equal(await notify(123, 'hello', {}, 'test alert'), true);
   });
 });
 

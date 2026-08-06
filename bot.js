@@ -21,6 +21,7 @@ const {
   peerlyticsIntentUrl
 } = require('./src/alerts');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
+const { createTelegramNotifier } = require('./src/telegram');
 
 // Supabase setup
 const supabase = createClient(
@@ -29,6 +30,7 @@ const supabase = createClient(
 );
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const sendTelegramNotification = createTelegramNotifier(bot);
 
 // Exchange rate API configuration
 const EXCHANGE_API_URL = `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/latest/USD`;
@@ -768,7 +770,7 @@ async function sendFulfilledNotification(rawIntent) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    bot.sendMessage(chatId, message, sendOptions);
+    await sendTelegramNotification(chatId, message, sendOptions, 'fulfilled order alert');
   }
 }
 
@@ -811,7 +813,7 @@ async function sendPrunedNotification(rawIntent) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    bot.sendMessage(chatId, message, sendOptions);
+    await sendTelegramNotification(chatId, message, sendOptions, 'cancelled order alert');
   }
 }
 
@@ -868,7 +870,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    bot.sendMessage(chatId, message, sendOptions);
+    await sendTelegramNotification(chatId, message, sendOptions, 'fulfilled order alert');
   }
 }
 
@@ -920,7 +922,7 @@ async function sendOrchestratorPrunedNotification(rawIntent) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    bot.sendMessage(chatId, message, sendOptions);
+    await sendTelegramNotification(chatId, message, sendOptions, 'cancelled order alert');
   }
 }
 
@@ -1111,7 +1113,7 @@ await postToDiscord({
 });
 
 
-await bot.sendMessage(chatId, message, sendOptions);
+await sendTelegramNotification(chatId, message, sendOptions, 'snipe alert');
     } else {
       console.log(`📊 No opportunity for user ${chatId}: ${percentageDiff.toFixed(2)}% < ${userThreshold}%`);
     }
@@ -1441,7 +1443,7 @@ const handleContractEvent = async (log) => {
 • *Tx:* [View on BaseScan](${txLink(log.transactionHash)})
 `.trim();
           
-          interestedUsers.forEach(chatId => {
+          await Promise.all(interestedUsers.map(async (chatId) => {
             const sendOptions = { 
               parse_mode: 'Markdown', 
               disable_web_page_preview: true,
@@ -1450,8 +1452,8 @@ const handleContractEvent = async (log) => {
             if (chatId === ZKP2P_GROUP_ID) {
               sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
             }
-            bot.sendMessage(chatId, message, sendOptions);
-          });
+            await sendTelegramNotification(chatId, message, sendOptions, 'unrecognized event alert');
+          }));
         }
       }
       return;
@@ -1515,7 +1517,7 @@ const handleContractEvent = async (log) => {
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
         }
-        bot.sendMessage(chatId, message, sendOptions);
+        await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');
       }
     }
 
@@ -2061,7 +2063,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
             reply_markup: createPeerlyticsKeyboard(peerlyticsUrl)
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-          await bot.sendMessage(chatId, message, sendOptions);
+          await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');
         }));
         return;
       }
