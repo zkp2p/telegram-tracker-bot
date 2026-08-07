@@ -245,6 +245,7 @@ function buildOrderStatusMessage({
 function buildSniperMessage({
   amount,
   conversionRate,
+  platform,
   marketRate,
   currencyCode,
   isOneToOne,
@@ -263,6 +264,7 @@ function buildSniperMessage({
   const lines = [
     headline,
     '',
+    `*Platform:* ${formatPlatform(platform)}`,
     `*Pay:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${currencyEmoji}`,
     `*Receive:* ${formatUSDCAmount(amount)} (= ~${formatFiatValue(marketValue, currencyCode)} ${currencyEmoji})`
   ];

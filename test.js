@@ -261,6 +261,7 @@ describe('Human-readable alerts', () => {
     const snipe = buildSniperMessage({
       amount: 100000000n,
       conversionRate: 950000000000000000n,
+      platform: 'paypal',
       currencyCode: 'USD',
       marketRate: 1,
       isOneToOne: false,
@@ -269,6 +270,7 @@ describe('Human-readable alerts', () => {
     const parity = buildSniperMessage({
       amount: 100000000n,
       conversionRate: 1000000000000000000n,
+      platform: 'cashapp',
       currencyCode: 'USD',
       marketRate: 1,
       isOneToOne: true,
@@ -278,6 +280,7 @@ describe('Human-readable alerts', () => {
     assert.equal(snipe, [
       '🎯 *Snipe opportunity*',
       '',
+      '*Platform:* PayPal',
       '*Pay:* $95.00 USD 🇺🇸',
       '*Receive:* 100.00 USDC (= ~$100.00 USD 🇺🇸)',
       '*Profit:* ~$5.00 USD',
@@ -285,6 +288,7 @@ describe('Human-readable alerts', () => {
       '',
       '[Download the mobile app](https://mobile.zkp2p.xyz/onboard) to receive faster notifications and snipe on the go.'
     ].join('\n'));
+    assert.match(parity, /\*Platform:\* Cash App/);
     assert.match(parity, /\*Pay:\* \$100\.00 USD 🇺🇸/);
     assert.equal(parity.includes('*Profit:*'), false);
   });

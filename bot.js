@@ -1091,6 +1091,7 @@ if (interestedUsers.length > 0) {
       const message = buildSniperMessage({
         amount: depositAmount,
         conversionRate,
+        platform: platformName,
         marketRate,
         currencyCode,
         isOneToOne,
