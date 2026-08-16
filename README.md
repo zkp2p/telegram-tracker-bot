@@ -5,7 +5,7 @@ Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, i
 ## 🚀 Features
 - **Full production lifecycle**: Monitors the legacy stack, Escrow/EscrowV2, and Orchestrator V1/V2/V3
 - **Efficient real-time tracking**: Routes six contract subscriptions through one resilient WebSocket connection
-- **Event notifications**: Get alerts for order creation, fulfillment, and cancellation
+- **Event notifications**: Get buy-order alerts for intents and sell-order alerts for new deposits
 - **Sniper alerts**: Automated arbitrage notifications when deposits offer better exchange rates than market
 - **Current payment methods**: Alipay, Cash App, Chime, Mercado Pago, Monzo, PayPal, Revolut, Venmo, Wise, and Zelle
 - **Persistent storage**: User data backed by Supabase database
@@ -54,12 +54,12 @@ EXCHANGE_API_KEY=your_exchange_rate_api_key
 ```
 
 ## 📊 Supported Events
-- `DepositReceived` - New deposits created
+- `DepositReceived` - New sell orders created; batched with payment-method events for one complete alert
 - `DepositCurrencyAdded` - Currency options added (triggers sniper)
 - `DepositVerifierAdded` - Platform verifiers added
-- `IntentSignaled` - Orders created
-- `IntentFulfilled` - Orders completed
-- `IntentPruned` - Orders cancelled
+- `IntentSignaled` - Buy orders created
+- `IntentFulfilled` - Buy orders completed
+- `IntentPruned` - Buy orders cancelled
 - `DepositWithdrawn` - Deposits withdrawn (ignored)
 - `DepositClosed` - Deposits closed (ignored)
 

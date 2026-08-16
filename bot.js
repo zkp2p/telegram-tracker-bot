@@ -14,14 +14,16 @@ const {
 } = require('./src/contracts');
 const {
   PEER_DEPOSITS_URL,
-  buildOrderCreatedMessage,
-  buildOrderStatusMessage,
+  buildBuyOrderCreatedMessage,
+  buildBuyOrderStatusMessage,
+  buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
   createTakeOnWebKeyboard
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
+const { createDepositCreationCollector } = require('./src/deposit-creations');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
 
@@ -686,6 +688,37 @@ const orchestratorV2Iface = new Interface(modernOrchestratorAbi);
 const pendingTransactions = new Map(); // txHash -> {fulfilled: Set, pruned: Set, blockNumber: number, rawIntents: Map}
 const processingScheduled = new Set(); // Track which transactions are scheduled for processing
 
+async function sendDepositCreationNotification(creation) {
+  if (creation.platforms.length === 0) {
+    throw new Error(`Deposit ${creation.depositId} did not emit a payment platform`);
+  }
+
+  const interestedUsers = await db.getUsersInterestedInDeposit(creation.depositId);
+  if (interestedUsers.length === 0) return;
+
+  const timestamp = await resolveBlockTimestamp(baseHttpProvider, creation.blockNumber);
+  const message = buildSellOrderCreatedMessage({
+    amount: creation.amount,
+    platforms: creation.platforms,
+    timestamp
+  });
+
+  await Promise.all(interestedUsers.map(async (chatId) => {
+    await db.logEventNotification(chatId, creation.depositId, 'deposit_created');
+    const sendOptions = {
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+      reply_markup: createPeerDepositsKeyboard(creation.escrowAddress, creation.depositId)
+    };
+    if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
+    await sendTelegramNotification(chatId, message, sendOptions, 'sell order created alert');
+  }));
+}
+
+const depositCreationCollector = createDepositCreationCollector({
+  onComplete: sendDepositCreationNotification
+});
+
 function scheduleTransactionProcessing(txHash) {
   if (processingScheduled.has(txHash)) return; // Already scheduled
   
@@ -744,7 +777,7 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
   
   console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
   
-  const message = buildOrderStatusMessage({
+  const message = buildBuyOrderStatusMessage({
     status: 'fulfilled',
     platform: getPlatformName(storedDetails?.verifier || verifier),
     amount,
@@ -774,7 +807,7 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    await sendTelegramNotification(chatId, message, sendOptions, 'fulfilled order alert');
+    await sendTelegramNotification(chatId, message, sendOptions, 'buy order fulfilled alert');
   }
 }
 
@@ -788,7 +821,7 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
   
   console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
   
-  const message = buildOrderStatusMessage({
+  const message = buildBuyOrderStatusMessage({
     status: 'cancelled',
     platform: getPlatformName(storedDetails?.verifier),
     amount: storedDetails?.amount,
@@ -818,7 +851,7 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    await sendTelegramNotification(chatId, message, sendOptions, 'cancelled order alert');
+    await sendTelegramNotification(chatId, message, sendOptions, 'buy order cancelled alert');
   }
 }
 
@@ -847,7 +880,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
 
   console.log(`📤 Sending fulfillment to ${interestedUsers.length} users interested in deposit ${depositId}`);
 
-  const message = buildOrderStatusMessage({
+  const message = buildBuyOrderStatusMessage({
     status: 'fulfilled',
     platform: platformName,
     amount,
@@ -876,7 +909,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    await sendTelegramNotification(chatId, message, sendOptions, 'fulfilled order alert');
+    await sendTelegramNotification(chatId, message, sendOptions, 'buy order fulfilled alert');
   }
 }
 
@@ -900,7 +933,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
 
   console.log(`📤 Sending cancellation to ${interestedUsers.length} users interested in deposit ${depositId}`);
 
-  const message = buildOrderStatusMessage({
+  const message = buildBuyOrderStatusMessage({
     status: 'cancelled',
     platform: getPlatformName(storedDetails.paymentMethod || storedDetails.escrow),
     amount: storedDetails.amount,
@@ -929,7 +962,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     }
-    await sendTelegramNotification(chatId, message, sendOptions, 'cancelled order alert');
+    await sendTelegramNotification(chatId, message, sendOptions, 'buy order cancelled alert');
   }
 }
 
@@ -1494,7 +1527,7 @@ const handleContractEvent = async (log) => {
 
       console.log(`📤 Sending to ${interestedUsers.length} users interested in deposit ${id}`);
 
-      const message = buildOrderCreatedMessage({
+      const message = buildBuyOrderCreatedMessage({
         platform: platformName,
         amount,
         conversionRate,
@@ -1522,7 +1555,7 @@ const handleContractEvent = async (log) => {
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
         }
-        await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');
+        await sendTelegramNotification(chatId, message, sendOptions, 'buy order created alert');
       }
     }
 
@@ -1685,6 +1718,7 @@ if (name === 'DepositReceived') {
   const usdcAmount = Number(amount);
   
   console.log(`💰 DepositReceived: ${id} with ${formatUSDC(amount)} USDC`);
+  depositCreationCollector.recordReceived(log, escrowContractAddress, id, amount);
   
   // Store the deposit amount for later sniper use
   await db.storeDepositAmount(id, usdcAmount);
@@ -1695,7 +1729,8 @@ if (name === 'DepositVerifierAdded') {
   const { depositId, verifier, payeeDetailsHash, intentGatingService } = parsed.args;
   const id = Number(depositId);
   
-  console.log(`👤 DepositVerifierAdded: deposit ${id}, verifier ${verifier} - ignoring`);
+  depositCreationCollector.recordPlatform(log, escrowContractAddress, id, getPlatformName(verifier));
+  console.log(`👤 DepositVerifierAdded: deposit ${id}, verifier ${verifier}`);
   return;
 }
 
@@ -1705,6 +1740,7 @@ if (name === 'DepositVerifierAdded') {
     const fiatCode = getFiatCode(currency);
     
     console.log(`🎯 DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}`);
+    depositCreationCollector.recordPlatform(log, escrowContractAddress, id, getPlatformName(verifier));
     
     // Get the actual deposit amount
     const depositAmount = await db.getDepositAmount(id);
@@ -1767,6 +1803,7 @@ const handleEscrowV3Event = async (log) => {
       const usdcAmount = Number(amount);
 
       console.log(`💰 V3 Escrow DepositReceived: ${id} with ${formatUSDC(amount)} USDC`);
+      depositCreationCollector.recordReceived(log, escrowV3ContractAddress, id, amount);
 
       // Store in-memory (not DB) to avoid collision with legacy escrow deposit IDs
       escrowV3DepositAmounts.set(id, usdcAmount);
@@ -1779,6 +1816,7 @@ const handleEscrowV3Event = async (log) => {
       const fiatCode = getFiatCode(currency);
 
       console.log(`🎯 V3 Escrow DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}, minConversionRate: ${minConversionRate}`);
+      depositCreationCollector.recordPlatform(log, escrowV3ContractAddress, id, getPlatformName(paymentMethod));
 
       // Read from in-memory cache (not DB) to avoid deposit ID collision
       const depositAmount = escrowV3DepositAmounts.get(id) || 0;
@@ -1807,8 +1845,13 @@ const handleEscrowV3Event = async (log) => {
     }
 
     if (name === 'DepositPaymentMethodAdded') {
-      // This event is deposit-related but we don't need to do anything with it
-      // Silently ignore - we only care about DepositReceived and DepositCurrencyAdded
+      const { depositId, paymentMethod } = parsed.args;
+      depositCreationCollector.recordPlatform(
+        log,
+        escrowV3ContractAddress,
+        Number(depositId),
+        getPlatformName(paymentMethod)
+      );
       return;
     }
 
@@ -1841,6 +1884,7 @@ const handleEscrowV2Event = async (log) => {
       const { depositId, amount } = parsed.args;
       const id = Number(depositId);
       console.log(`💰 EscrowV2 DepositReceived: ${id} with ${formatUSDC(amount)} USDC`);
+      depositCreationCollector.recordReceived(log, escrowV2ContractAddress, id, amount);
       escrowV2DepositAmounts.set(id, Number(amount));
       return;
     }
@@ -1859,6 +1903,7 @@ const handleEscrowV2Event = async (log) => {
       const id = Number(depositId);
       const fiatCode = getFiatCode(currency);
       console.log(`🎯 EscrowV2 DepositCurrencyAdded detected: deposit ${id}, currency: ${fiatCode}, minConversionRate: ${minConversionRate}`);
+      depositCreationCollector.recordPlatform(log, escrowV2ContractAddress, id, getPlatformName(paymentMethod));
 
       const depositAmount = escrowV2DepositAmounts.get(id) || 0;
       console.log(`💰 Retrieved deposit amount: ${depositAmount} (${formatUSDC(depositAmount)} USDC)`);
@@ -1882,6 +1927,17 @@ const handleEscrowV2Event = async (log) => {
         minConversionRate,
         paymentMethod,
         escrowV2ContractAddress
+      );
+      return;
+    }
+
+    if (name === 'DepositPaymentMethodAdded') {
+      const { depositId, paymentMethod } = parsed.args;
+      depositCreationCollector.recordPlatform(
+        log,
+        escrowV2ContractAddress,
+        Number(depositId),
+        getPlatformName(paymentMethod)
       );
       return;
     }
@@ -2043,7 +2099,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
         if (interestedUsers.length === 0) return;
 
         const fiatCode = getFiatCode(fiatCurrency);
-        const message = buildOrderCreatedMessage({
+        const message = buildBuyOrderCreatedMessage({
           platform: getPlatformName(paymentMethod),
           amount,
           conversionRate,
@@ -2067,7 +2123,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
             reply_markup: createPeerDepositsKeyboard(escrow, id)
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
-          await sendTelegramNotification(chatId, message, sendOptions, 'created order alert');
+          await sendTelegramNotification(chatId, message, sendOptions, 'buy order created alert');
         }));
         return;
       }

@@ -17,8 +17,9 @@ const {
 const { createAddressRouter } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
 const {
-  buildOrderCreatedMessage,
-  buildOrderStatusMessage,
+  buildBuyOrderCreatedMessage,
+  buildBuyOrderStatusMessage,
+  buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
@@ -29,6 +30,7 @@ const {
   peerlyticsIntentUrl
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
+const { createDepositCreationCollector } = require('./src/deposit-creations');
 
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -76,6 +78,36 @@ describe('Block timestamp resolution', () => {
     assert.equal(timestamp, 654321);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0][0], /block 99/);
+  });
+});
+
+describe('Deposit creation collection', () => {
+  it('batches one sell order with every platform from the creation transaction', async () => {
+    const scheduled = [];
+    const completed = [];
+    const collector = createDepositCreationCollector({
+      onComplete: async (creation) => completed.push(creation),
+      schedule: (callback) => scheduled.push(callback)
+    });
+    const log = {
+      transactionHash: '0x' + 'ab'.repeat(32),
+      blockNumber: 12345
+    };
+    const escrowAddress = CONTRACT_ADDRESSES.escrowV2;
+
+    collector.recordReceived(log, escrowAddress, 17, 250500000n);
+    collector.recordPlatform(log, escrowAddress, 17, 'PayPal');
+    collector.recordPlatform(log, escrowAddress, 17, 'PayPal');
+    collector.recordPlatform(log, escrowAddress, 17, 'Cash App');
+    await scheduled[0]();
+
+    assert.deepEqual(completed, [{
+      depositId: 17,
+      escrowAddress,
+      amount: 250500000n,
+      platforms: ['PayPal', 'Cash App'],
+      blockNumber: 12345
+    }]);
   });
 });
 
@@ -235,8 +267,8 @@ describe('Human-readable alerts', () => {
   const timestamp = Date.UTC(2026, 7, 6, 18, 42) / 1000;
   const intentHash = '0x' + 'AB'.repeat(32);
 
-  it('summarizes a created order without protocol internals', () => {
-    const message = buildOrderCreatedMessage({
+  it('summarizes a created buy order without protocol internals', () => {
+    const message = buildBuyOrderCreatedMessage({
       platform: 'wise',
       amount: 100000000n,
       conversionRate: 950000000000000000n,
@@ -245,7 +277,7 @@ describe('Human-readable alerts', () => {
     });
 
     assert.equal(message, [
-      '🟡 *Order created*',
+      '🟡 *Buy order created*',
       '',
       '*Platform:* Wise',
       '*From:* $95.00 USD 🇺🇸',
@@ -255,6 +287,22 @@ describe('Human-readable alerts', () => {
     for (const noisyLabel of ['Deposit ID', 'Order ID', 'Owner', 'Block', 'BaseScan']) {
       assert.equal(message.includes(noisyLabel), false);
     }
+  });
+
+  it('summarizes a created sell order with its USDC amount and platforms', () => {
+    const message = buildSellOrderCreatedMessage({
+      amount: 250500000n,
+      platforms: ['paypal', 'cashapp'],
+      timestamp
+    });
+
+    assert.equal(message, [
+      '🔵 *Sell order created*',
+      '',
+      '*Amount:* 250.50 USDC',
+      '*Platforms:* PayPal, Cash App',
+      '*At:* Aug 6, 2026 at 6:42 PM UTC'
+    ].join('\n'));
   });
 
   it('summarizes snipe and 1:1 opportunities consistently', () => {
@@ -319,7 +367,7 @@ describe('Human-readable alerts', () => {
 
   it('keeps lifecycle updates concise and human-readable', () => {
     const eventTimestamp = Date.UTC(2026, 7, 6, 20, 7) / 1000;
-    const fulfilled = buildOrderStatusMessage({
+    const fulfilled = buildBuyOrderStatusMessage({
       status: 'fulfilled',
       platform: 'paypal',
       amount: 25000000n,
@@ -328,7 +376,7 @@ describe('Human-readable alerts', () => {
       signalTimestamp: timestamp,
       eventTimestamp
     });
-    const cancelled = buildOrderStatusMessage({
+    const cancelled = buildBuyOrderStatusMessage({
       status: 'cancelled',
       platform: 'wise',
       amount: 25000000n,
@@ -339,7 +387,7 @@ describe('Human-readable alerts', () => {
     });
 
     assert.equal(fulfilled, [
-      '🟢 *Order fulfilled*',
+      '🟢 *Buy order fulfilled*',
       '',
       '*Platform:* PayPal',
       '*From:* $25.00 USD 🇺🇸',
@@ -348,7 +396,7 @@ describe('Human-readable alerts', () => {
       '*Fulfilled in:* 1h 25m'
     ].join('\n'));
     assert.equal(cancelled, [
-      '🟠 *Order cancelled*',
+      '🟠 *Buy order cancelled*',
       '',
       '*Platform:* Wise',
       '*From:* $25.00 USD 🇺🇸',

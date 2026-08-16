@@ -192,7 +192,7 @@ function createTakeOnWebKeyboard(escrowAddress, depositId) {
   };
 }
 
-function buildOrderCreatedMessage({
+function buildBuyOrderCreatedMessage({
   platform,
   amount,
   conversionRate,
@@ -200,7 +200,7 @@ function buildOrderCreatedMessage({
   timestamp
 }) {
   return [
-    '🟡 *Order created*',
+    '🟡 *Buy order created*',
     '',
     `*Platform:* ${formatPlatform(platform)}`,
     `*From:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${getCurrencyEmoji(currencyCode)}`,
@@ -209,7 +209,7 @@ function buildOrderCreatedMessage({
   ].join('\n');
 }
 
-function buildOrderStatusMessage({
+function buildBuyOrderStatusMessage({
   status,
   platform,
   amount,
@@ -219,7 +219,7 @@ function buildOrderStatusMessage({
   eventTimestamp
 }) {
   const fulfilled = status === 'fulfilled';
-  const title = fulfilled ? '🟢 *Order fulfilled*' : '🟠 *Order cancelled*';
+  const title = fulfilled ? '🟢 *Buy order fulfilled*' : '🟠 *Buy order cancelled*';
   const hasAmounts = amount != null && conversionRate != null && currencyCode;
   const lines = [title, ''];
 
@@ -240,6 +240,16 @@ function buildOrderStatusMessage({
   }
 
   return lines.join('\n');
+}
+
+function buildSellOrderCreatedMessage({ amount, platforms, timestamp }) {
+  return [
+    '🔵 *Sell order created*',
+    '',
+    `*Amount:* ${formatUSDCAmount(amount)}`,
+    `*Platforms:* ${platforms.map(formatPlatform).join(', ')}`,
+    `*At:* ${formatAlertTime(timestamp)}`
+  ].join('\n');
 }
 
 function buildSniperMessage({
@@ -285,8 +295,9 @@ function buildSniperMessage({
 module.exports = {
   MOBILE_ONBOARD_URL,
   PEER_DEPOSITS_URL,
-  buildOrderCreatedMessage,
-  buildOrderStatusMessage,
+  buildBuyOrderCreatedMessage,
+  buildBuyOrderStatusMessage,
+  buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
