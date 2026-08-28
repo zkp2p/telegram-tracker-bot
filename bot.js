@@ -24,6 +24,11 @@ const {
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
+const {
+  OFFICIAL_GROUP_CHAT_ID: ZKP2P_GROUP_ID,
+  includeOfficialGroup,
+  isOfficialGroup
+} = require('./src/recipients');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
 
@@ -260,7 +265,7 @@ class DatabaseManager {
     allListeners?.forEach(user => allUsers.add(user.chat_id));
     specificTrackers?.forEach(user => allUsers.add(user.chat_id));
     
-    return Array.from(allUsers);
+    return includeOfficialGroup(allUsers);
   }
 
   async getAnalytics() {
@@ -530,7 +535,6 @@ function toDiscordMarkdown(msg) {
 
 const db = new DatabaseManager();
 
-const ZKP2P_GROUP_ID = -1001928949520;
 const ZKP2P_TOPIC_ID = 5385;
 const ZKP2P_SNIPER_TOPIC_ID = 5671;
 
@@ -1100,11 +1104,9 @@ async function checkSniperOpportunity(
 recentSniperAlerts.set(dedupKey, Date.now());
 
 // Get users with their custom thresholds and check each one individually
-const interestedUsers = await db.getUsersWithSniper(currencyCode, platformName);
-
-if (!interestedUsers.includes(ZKP2P_GROUP_ID)) {
-  interestedUsers.push(ZKP2P_GROUP_ID);
-}
+const interestedUsers = includeOfficialGroup(
+  await db.getUsersWithSniper(currencyCode, platformName)
+);
 
 if (interestedUsers.length > 0) {
   console.log(`🎯 Checking thresholds for ${interestedUsers.length} potential users`);
@@ -1178,6 +1180,10 @@ bot.onText(/\/deposit (.+)/, async (msg, match) => {
   }
   
   if (input === 'stop') {
+    if (isOfficialGroup(chatId)) {
+      bot.sendMessage(chatId, 'The official Peer trade feed is always on.');
+      return;
+    }
     await db.setUserListenAll(chatId, false);
     bot.sendMessage(chatId, `🛑 *Stopped listening to all deposits.*\n\nYou will now only receive notifications for specifically tracked deposits.`, { parse_mode: 'Markdown' });
     return;
@@ -1267,6 +1273,10 @@ bot.onText(/\/list/, async (msg) => {
 
 bot.onText(/\/clearall/, async (msg) => {
   const chatId = msg.chat.id;
+  if (isOfficialGroup(chatId)) {
+    bot.sendMessage(chatId, 'The official Peer trade feed is always on.');
+    return;
+  }
   await db.clearUserData(chatId);
   bot.sendMessage(chatId, `🗑️ Cleared all tracked deposit IDs, stopped listening to all deposits, and cleared all sniper settings.`, { parse_mode: 'Markdown' });
 });

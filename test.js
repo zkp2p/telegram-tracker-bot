@@ -31,6 +31,11 @@ const {
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
+const {
+  OFFICIAL_GROUP_CHAT_ID,
+  includeOfficialGroup,
+  isOfficialGroup
+} = require('./src/recipients');
 
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -58,6 +63,21 @@ describe('Runtime dependencies', () => {
   it('reports successful Telegram deliveries', async () => {
     const notify = createTelegramNotifier({ sendMessage: async () => ({ message_id: 1 }) });
     assert.equal(await notify(123, 'hello', {}, 'test alert'), true);
+  });
+});
+
+describe('Official group recipients', () => {
+  it('keeps the official Peer trade feed subscribed', () => {
+    assert.deepEqual(includeOfficialGroup([]), [OFFICIAL_GROUP_CHAT_ID]);
+    assert.deepEqual(
+      includeOfficialGroup([123, OFFICIAL_GROUP_CHAT_ID, 123]),
+      [123, OFFICIAL_GROUP_CHAT_ID]
+    );
+  });
+
+  it('only protects the official group from disabling the feed', () => {
+    assert.equal(isOfficialGroup(OFFICIAL_GROUP_CHAT_ID), true);
+    assert.equal(isOfficialGroup(123), false);
   });
 });
 
