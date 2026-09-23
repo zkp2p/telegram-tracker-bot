@@ -21,8 +21,7 @@ const {
   buildSniperMessage,
   createPeerDepositsKeyboard,
   createPeerlyticsKeyboard,
-  createTakeOnWebKeyboard,
-  peerlyticsIntentUrl
+  createTakeOnWebKeyboard
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
@@ -33,7 +32,6 @@ const {
 } = require('./src/recipients');
 const { ResilientWebSocketProvider } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
-const { createSlackNotifier } = require('./src/slack');
 
 // Supabase setup
 const supabase = createClient(
@@ -43,12 +41,6 @@ const supabase = createClient(
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const sendTelegramNotification = createTelegramNotifier(bot);
-const sendSlackNotification = process.env.SLACK_BOT_TOKEN || process.env.SLACK_FEES_CHANNEL_ID
-  ? createSlackNotifier({
-    token: process.env.SLACK_BOT_TOKEN,
-    channel: process.env.SLACK_FEES_CHANNEL_ID
-  })
-  : null;
 
 // Exchange rate API configuration
 const EXCHANGE_API_URL = `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/latest/USD`;
@@ -800,10 +792,6 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     eventTimestamp
   });
 
-  if (sendSlackNotification) {
-    await sendSlackNotification(message, peerlyticsIntentUrl(intentHash));
-  }
-
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
@@ -906,10 +894,6 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     signalTimestamp: storedDetails.timestamp,
     eventTimestamp
   });
-
-  if (sendSlackNotification) {
-    await sendSlackNotification(message, peerlyticsIntentUrl(intentHash));
-  }
 
   await postToDiscord({
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,

@@ -51,12 +51,7 @@ BASE_RPC=wss://your_base_websocket_rpc
 SUPABASE_URL=your_supabase_url
 SUPABASE_ANON_KEY=your_supabase_key
 EXCHANGE_API_KEY=your_exchange_rate_api_key
-# Optional: mirror fulfilled onchain orders to a Slack channel.
-SLACK_BOT_TOKEN=your_slack_bot_token
-SLACK_FEES_CHANNEL_ID=your_slack_channel_id
 ```
-
-Slack alerts use the same fulfilled intent events and message body as the Telegram trade feed. The Slack bot must be a member of the configured channel and have `chat:write`. Relay-only trades are outside this contract tracker and need a separate completion source.
 
 ## 📊 Supported Events
 - `DepositReceived` - New sell orders created; batched with payment-method events for one complete alert
