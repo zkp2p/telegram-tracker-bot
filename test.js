@@ -16,6 +16,7 @@ const {
 } = require('./src/contracts');
 const { createAddressRouter } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
+const { createSlackNotifier } = require('./src/slack');
 const {
   buildBuyOrderCreatedMessage,
   buildBuyOrderStatusMessage,
@@ -63,6 +64,62 @@ describe('Runtime dependencies', () => {
   it('reports successful Telegram deliveries', async () => {
     const notify = createTelegramNotifier({ sendMessage: async () => ({ message_id: 1 }) });
     assert.equal(await notify(123, 'hello', {}, 'test alert'), true);
+  });
+});
+
+describe('Slack fulfilled-order delivery', () => {
+  it('posts one completed order with its intent link', async () => {
+    const calls = [];
+    const notify = createSlackNotifier({
+      token: 'test-token',
+      channel: 'CFEES',
+      fetchImpl: async (...args) => {
+        calls.push(args);
+        return { ok: true, json: async () => ({ ok: true, ts: '123.456' }) };
+      }
+    });
+
+    assert.equal(await notify('🟢 *Buy order fulfilled*', 'https://peerlytics.xyz/explorer/intent/0x123'), true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'https://slack.com/api/chat.postMessage');
+    assert.equal(calls[0][1].headers.Authorization, 'Bearer test-token');
+    assert.deepEqual(JSON.parse(calls[0][1].body), {
+      channel: 'CFEES',
+      text: '🟢 *Buy order fulfilled*\n<https://peerlytics.xyz/explorer/intent/0x123|View on Peerlytics>',
+      unfurl_links: false,
+      unfurl_media: false
+    });
+  });
+
+  it('requires both Slack settings and isolates an API rejection', async () => {
+    assert.throws(() => createSlackNotifier({ token: 'test-token' }), /SLACK_FEES_CHANNEL_ID/);
+    const errors = [];
+    const notify = createSlackNotifier({
+      token: 'test-token',
+      channel: 'CFEES',
+      fetchImpl: async () => ({ ok: true, json: async () => ({ ok: false, error: 'not_in_channel' }) }),
+      logger: { error: (...args) => errors.push(args) }
+    });
+
+    assert.equal(await notify('completed', 'https://peerlytics.xyz/explorer/intent/0x123'), false);
+    assert.match(errors[0][1].message, /not_in_channel/);
+  });
+
+  it('retries a rate-limited post using Retry-After', async () => {
+    let calls = 0;
+    const notify = createSlackNotifier({
+      token: 'test-token',
+      channel: 'CFEES',
+      fetchImpl: async () => {
+        calls++;
+        return calls === 1
+          ? { status: 429, headers: { get: () => '0' } }
+          : { ok: true, json: async () => ({ ok: true }) };
+      }
+    });
+
+    assert.equal(await notify('completed', 'https://peerlytics.xyz/explorer/intent/0x123'), true);
+    assert.equal(calls, 2);
   });
 });
 
