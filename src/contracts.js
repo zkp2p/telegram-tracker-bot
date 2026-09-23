@@ -68,6 +68,11 @@ function getPlatformName(identifier) {
   return `Unknown (${normalized.slice(0, 8)}...${normalized.slice(-6)})`;
 }
 
+function isQuotedConversionRate(rate) {
+  // Zero clears a fixed floor or removes a currency; 1 is an oracle-only placeholder.
+  return rate >= 10000000000n;
+}
+
 const legacyEscrowAbi = [
   'event IntentSignaled(bytes32 indexed intentHash, uint256 indexed depositId, address indexed verifier, address owner, address to, uint256 amount, bytes32 fiatCurrency, uint256 conversionRate, uint256 timestamp)',
   'event IntentFulfilled(bytes32 indexed intentHash, uint256 indexed depositId, address indexed verifier, address owner, address to, uint256 amount, uint256 sustainabilityFee, uint256 verifierFee)',
@@ -120,6 +125,7 @@ module.exports = {
   escrowAbi,
   escrowV2Abi,
   getPlatformName,
+  isQuotedConversionRate,
   legacyEscrowAbi,
   modernOrchestratorAbi,
   orchestratorAbi,

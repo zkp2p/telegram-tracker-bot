@@ -10,6 +10,7 @@ const {
   escrowAbi,
   escrowV2Abi,
   getPlatformName,
+  isQuotedConversionRate,
   legacyEscrowAbi,
   modernOrchestratorAbi,
   orchestratorAbi
@@ -160,6 +161,14 @@ function encodeLog(iface, eventName, indexedValues, nonIndexedValues, address) {
 }
 
 describe('Base deployment configuration', () => {
+  it('rejects cleared and oracle-placeholder rates before sniper alerts', () => {
+    assert.equal(isQuotedConversionRate(0n), false);
+    assert.equal(isQuotedConversionRate(1n), false);
+    assert.equal(isQuotedConversionRate(9999999999n), false);
+    assert.equal(isQuotedConversionRate(10000000000n), true);
+    assert.equal(isQuotedConversionRate(332420988000000000000n), true);
+  });
+
   it('contains the six independently deployed contracts monitored by the bot', () => {
     assert.equal(Object.keys(CONTRACT_ADDRESSES).length, 6);
     assert.equal(new Set(Object.values(CONTRACT_ADDRESSES).map((value) => value.toLowerCase())).size, 6);

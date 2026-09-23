@@ -8,6 +8,7 @@ const {
   escrowAbi,
   escrowV2Abi,
   getPlatformName,
+  isQuotedConversionRate,
   legacyEscrowAbi,
   modernOrchestratorAbi,
   orchestratorAbi
@@ -1065,6 +1066,11 @@ async function checkSniperOpportunity(
     console.log(`⚠️ Invalid deposit amount for deposit ${depositId}: ${depositAmount}, skipping sniper check`);
     return;
   }
+
+  if (!isQuotedConversionRate(conversionRate)) {
+    console.log(`⚠️ No quoted conversion rate for deposit ${depositId}, currency ${currencyCode}; skipping sniper check`);
+    return;
+  }
   
   console.log(`🎯 Checking sniper opportunity for deposit ${depositId}, currency: ${currencyCode}, amount: ${(Number(depositAmount) / 1e6).toFixed(2)} USDC`);
   
@@ -1837,12 +1843,6 @@ const handleEscrowV3Event = async (log) => {
         return;
       }
 
-      // Skip oracle-priced deposits (V3 doesn't support oracle config events)
-      if (Number(minConversionRate) < 1e10) {
-        console.log(`⚠️ V3 deposit ${id} has very low minConversionRate (${minConversionRate}), likely oracle-priced - skipping`);
-        return;
-      }
-
       await checkSniperOpportunity(
         id,
         depositAmount,
@@ -1920,13 +1920,6 @@ const handleEscrowV2Event = async (log) => {
 
       if (!depositAmount || Number(depositAmount) <= 0) {
         console.log(`⚠️ Deposit amount not available yet for deposit ${id}`);
-        return;
-      }
-
-      // If minConversionRate is very low, this deposit uses oracle pricing.
-      // The actual rate will come from the DepositOracleRateConfigSet event.
-      if (Number(minConversionRate) < 1e10) {
-        console.log(`⏳ Deposit ${id} uses oracle pricing (minConversionRate=${minConversionRate}), waiting for oracle config event`);
         return;
       }
 
