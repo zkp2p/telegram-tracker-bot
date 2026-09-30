@@ -20,6 +20,7 @@ const ACTIVE_PAYMENT_METHODS = Object.freeze({
   revolut: '0x617f88ab82b5c1b014c539f7e75121427f0bb50a4c58b187a238531e7d58605d',
   venmo: '0x90262a3db0edd0be2369c6b28f9e8511ec0bac7136cefbada0880602f87e7268',
   wise: '0x554a007c2217df766b977723b276671aee5ebb4adaea0edb6433c88b3e61dac5',
+  xmoney: '0x790dd0cc68b6e7f474649a6c0a5463a964be9d2589e2076b6dc99f5701543f51',
   zelle: '0xf752c7d19698ecb0bb8988abf9b9a53a4c3657f3bc8850a6fb59fdf3e3ce8cd3'
 });
 

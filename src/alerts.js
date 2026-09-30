@@ -49,6 +49,7 @@ const PLATFORM_LABELS = Object.freeze({
   revolut: 'Revolut',
   venmo: 'Venmo',
   wise: 'Wise',
+  xmoney: 'X Money',
   zelle: 'Zelle'
 });
 
