@@ -184,7 +184,7 @@ describe('Base deployment configuration', () => {
     );
   });
 
-  it('tracks the ten live payment methods', () => {
+  it('tracks the eleven live payment methods', () => {
     assert.deepEqual(Object.keys(ACTIVE_PAYMENT_METHODS).sort(), [
       'alipay',
       'cashapp',
@@ -195,6 +195,7 @@ describe('Base deployment configuration', () => {
       'revolut',
       'venmo',
       'wise',
+      'xmoney',
       'zelle'
     ]);
     assert.equal(
@@ -204,6 +205,10 @@ describe('Base deployment configuration', () => {
     assert.equal(
       ACTIVE_PAYMENT_METHODS.alipay,
       '0xcac9daea62d7b89d75ac73af4ee14dcf25721012ae82b568c2ea5c808eaa04ff'
+    );
+    assert.equal(
+      ACTIVE_PAYMENT_METHODS.xmoney,
+      '0x790dd0cc68b6e7f474649a6c0a5463a964be9d2589e2076b6dc99f5701543f51'
     );
   });
 
@@ -435,6 +440,7 @@ describe('Human-readable alerts', () => {
     assert.equal(formatElapsedTime(timestamp, timestamp + 300), '5m');
     assert.equal(formatElapsedTime(timestamp, timestamp + 30), '<1m');
     assert.equal(formatPlatform('Unknown (0x1234...5678)'), 'Payment app');
+    assert.equal(formatPlatform('xmoney'), 'X Money');
   });
 
   it('builds canonical explorer and Peer action links', () => {
