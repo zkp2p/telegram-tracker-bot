@@ -7,7 +7,7 @@ Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, i
 - **Efficient real-time tracking**: Routes six contract subscriptions through one resilient WebSocket connection
 - **Event notifications**: Get buy-order alerts for intents and sell-order alerts for new deposits
 - **Sniper alerts**: Automated arbitrage notifications when deposits offer better exchange rates than market
-- **Current payment methods**: Alipay, Cash App, Chime, Mercado Pago, Monzo, PayPal, Revolut, Venmo, Wise, X Money, and Zelle
+- **Current payment methods**: Alipay, Cash App, Chime, Mercado Pago, Monobank, Monzo, PayPal, Revolut, Venmo, Wise, X Money, and Zelle
 - **Persistent storage**: User data backed by Supabase database
 - **Resilient operation**: Automatic reconnects, graceful shutdown, and isolated event-handler failures
 
@@ -23,6 +23,7 @@ Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, i
 ### Sniper (Arbitrage Alerts)
 - `/sniper eur` - Snipe EUR on ALL platforms
 - `/sniper eur revolut` - Snipe EUR only on Revolut
+- `/sniper uah monobank` - Snipe Ukrainian hryvnia only on Monobank
 - `/sniper usd zelle` - Snipe USD only on Zelle
 - `/sniper list` - Show active sniper settings
 - `/sniper clear` - Clear all sniper settings
