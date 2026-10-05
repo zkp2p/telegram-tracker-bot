@@ -184,12 +184,13 @@ describe('Base deployment configuration', () => {
     );
   });
 
-  it('tracks the eleven live payment methods', () => {
+  it('tracks the supported live payment methods', () => {
     assert.deepEqual(Object.keys(ACTIVE_PAYMENT_METHODS).sort(), [
       'alipay',
       'cashapp',
       'chime',
       'mercadopago',
+      'monobank',
       'monzo',
       'paypal',
       'revolut',
@@ -373,6 +374,25 @@ describe('Human-readable alerts', () => {
     assert.match(parity, /\*Platform:\* Cash App/);
     assert.match(parity, /\*Pay:\* \$100\.00 USD 🇺🇸/);
     assert.equal(parity.includes('*Profit:*'), false);
+  });
+
+  it('renders Monobank UAH sniper alerts from the deployed payment method', () => {
+    const platform = getPlatformName('0x1d966dbd6aeb8674d7c05174bd0ded7b56a798672bfb862ef20bbe8c2bbfce18');
+    assert.equal(platform, 'monobank');
+    assert.equal(SUPPORTED_SNIPER_PLATFORMS.includes(platform), true);
+    const message = buildSniperMessage({
+      platform,
+      amount: 100000000n,
+      conversionRate: 40000000000000000000n,
+      marketRate: 42,
+      currencyCode: 'UAH',
+      isOneToOne: false,
+      timestamp
+    });
+    assert.match(message, /\*Platform:\* Monobank/);
+    assert.match(message, /\*Pay:\* ₴4,000\.00 UAH 🇺🇦/);
+    assert.match(message, /\*Receive:\* 100\.00 USDC \(= ~₴4,200\.00 UAH 🇺🇦\)/);
+    assert.match(message, /\*Profit:\* ~\$4\.76 USD/);
   });
 
   it('only shows snipe profit when its USD value exceeds one dollar', () => {

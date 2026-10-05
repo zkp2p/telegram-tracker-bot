@@ -33,6 +33,7 @@ const CURRENCY_EMOJIS = Object.freeze({
   SGD: '🇸🇬',
   THB: '🇹🇭',
   TRY: '🇹🇷',
+  UAH: '🇺🇦',
   USD: '🇺🇸',
   VND: '🇻🇳',
   ZAR: '🇿🇦'
@@ -43,6 +44,7 @@ const PLATFORM_LABELS = Object.freeze({
   cashapp: 'Cash App',
   chime: 'Chime',
   mercadopago: 'Mercado Pago',
+  monobank: 'Monobank',
   monzo: 'Monzo',
   n26: 'N26',
   paypal: 'PayPal',
