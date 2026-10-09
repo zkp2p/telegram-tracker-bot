@@ -5,7 +5,9 @@
   "main": "bot.js",
   "scripts": {
     "check": "node --check bot.js && node --check src/alerts.js && node --check src/chain.js && node --check src/contracts.js && node --check src/deposit-creations.js && node --check src/recipients.js && node --check src/resilient-websocket-provider.js && node --check src/telegram.js",
-    "test": "node --test test.js",
+    "test": "node --test test.js slack-revenue.test.js",
+    "check:slack": "node --check slack-revenue-bot.js && node --check src/slack-revenue.js && node --check src/slack-revenue-delivery.js && node --check src/slack-revenue-worker.js",
+    "start:slack": "node slack-revenue-bot.js",
     "start": "node bot.js",
     "dev": "node bot.js"
   },

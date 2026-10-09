@@ -68,6 +68,11 @@ Orchestrator V1, V2, and V3 share the lifecycle event signatures above. Contract
 
 ## Development
 
+For the independent **Peer Revenue** Slack bot (revenue, volume, payment
+platform and web/iOS/Android attribution), see [setup and coverage](SLACK_REVENUE.md).
+The Telegram entrypoint remains `npm start`; the Slack entrypoint is
+`npm run start:slack`.
+
 ```bash
 npm install
 npm run check
