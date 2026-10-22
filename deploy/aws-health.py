@@ -7,9 +7,10 @@ import shutil
 import subprocess
 import urllib.request
 
-REGION = 'us-east-1'
-ACCOUNT = '411399509833'
-INSTANCE = 'i-0da4a896fd49398b5'
+TARGET = json.loads(Path('/etc/peer-telegram-tracker/health-target.json').read_text())
+REGION = TARGET['region']
+ACCOUNT = TARGET['accountId']
+INSTANCE = TARGET['instanceId']
 AWS_ENV = {
     'PATH': '/usr/local/bin:/usr/bin:/bin',
     'AWS_REGION': REGION,
@@ -36,7 +37,7 @@ def aws(*args):
 
 def main():
     identity = aws('sts', 'get-caller-identity')
-    expected = f'arn:aws:sts::{ACCOUNT}:assumed-role/peer-telegram-tracker-aws-ec2/{INSTANCE}'
+    expected = f"arn:aws:sts::{ACCOUNT}:assumed-role/{TARGET['roleName']}/{INSTANCE}"
     assert identity['Account'] == ACCOUNT and identity['Arn'] == expected
     checks = {}
     for unit in ['peer-telegram-tracker']:

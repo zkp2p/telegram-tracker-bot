@@ -6,7 +6,7 @@ it does not change trading alerts or subscription logic.
 
 ## Runtime
 
-- Account `411399509833`, region `us-east-1`, instance `i-0da4a896fd49398b5`.
+- Use the production target recorded in the team incident manifest. Keep account and host coordinates in the private operator configuration.
 - Systemd unit and Docker container: `peer-telegram-tracker`.
 - Image: `sha256:a89bdcba8e47fcb8ff093dd9b23e61858336bed6825524dea8f8f757deb80393`.
 - Node 22.23.4, UID 10001, read-only root, dropped capabilities, 512 MiB memory.
@@ -41,16 +41,16 @@ The initial cutover observed zero monitored contract logs in blocks
 52952336–52952343. Real Telegram notifications were observed after activation.
 The old Railway deployment is removed, autodeploy disabled and restart policy NEVER.
 
-The image is archived in the versioned service backup bucket under
-`telegram-tracker/artifacts/8ff871618b92bf2f484fa9ba43af66b8ff9a254d72a93d8a072da27b1b947850.tar.gz`,
-version `AP.v81Ky7gqou8gSo7WCgOp5CSeklb2O`; exact-version download, SHA-256 and
-Docker load were verified. Root snapshots are daily and encrypted. They do not
+The image archive location and immutable version are recorded in the private incident manifest. Exact-version download, SHA-256 and Docker load were verified. Root snapshots are daily and encrypted. They do not
 back up the externally hosted Supabase database.
 
 ## Monitoring and unresolved access
 
 `aws-health.py` emits process, image, Telegram, Supabase, RPC and disk checks using
-the scoped EC2 role. Six CloudWatch alarms exist. The shared SNS topic currently
+the scoped EC2 role. Before installation, render root-owned mode-0600
+`/etc/peer-telegram-tracker/health-target.json` with `region`, `accountId`,
+`instanceId` and `roleName` from the verified operator target. The check asserts
+that the active instance identity matches those coordinates. Six CloudWatch alarms exist. The shared SNS topic currently
 has no confirmed subscription, so notification delivery is not verified.
 
 Credential rotation remains open pending provider ownership: Telegram BotFather,
