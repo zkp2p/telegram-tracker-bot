@@ -19,9 +19,10 @@ const {
   buildBuyOrderStatusMessage,
   buildSellOrderCreatedMessage,
   buildSniperMessage,
-  createPeerDepositsKeyboard,
+  createPeerExplorerBuyKeyboard,
   createPeerExplorerSellKeyboard,
-  createTakeOnWebKeyboard
+  createTakeOnWebKeyboard,
+  peerExplorerBuyUrl
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
@@ -713,7 +714,7 @@ async function sendDepositCreationNotification(creation) {
     const sendOptions = {
       parse_mode: 'Markdown',
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard(creation.escrowAddress, creation.depositId)
+      reply_markup: createPeerExplorerSellKeyboard(creation.escrowAddress, creation.depositId)
     };
     if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
     await sendTelegramNotification(chatId, message, sendOptions, 'sell order created alert');
@@ -796,7 +797,7 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
 
@@ -807,7 +808,7 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard(escrowContractAddress, depositId)
+      reply_markup: createPeerExplorerBuyKeyboard(intentHash)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -840,7 +841,7 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
 
@@ -851,7 +852,7 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard(escrowContractAddress, depositId)
+      reply_markup: createPeerExplorerBuyKeyboard(intentHash)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -899,7 +900,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
   for (const chatId of interestedUsers) {
@@ -909,7 +910,7 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard(storedDetails.escrow, depositId)
+      reply_markup: createPeerExplorerBuyKeyboard(intentHash)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -952,7 +953,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
     webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
     threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
     content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
   for (const chatId of interestedUsers) {
@@ -962,7 +963,7 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
     const sendOptions = { 
       parse_mode: 'Markdown', 
       disable_web_page_preview: true,
-      reply_markup: createPeerDepositsKeyboard(storedDetails.escrow, depositId)
+      reply_markup: createPeerExplorerBuyKeyboard(intentHash)
     };
     if (chatId === ZKP2P_GROUP_ID) {
       sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -1553,7 +1554,7 @@ const handleContractEvent = async (log) => {
         webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
         threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
         content: toDiscordMarkdown(message),
-        components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+        components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
       });
 
 
@@ -1564,7 +1565,7 @@ const handleContractEvent = async (log) => {
         const sendOptions = { 
           parse_mode: 'Markdown', 
           disable_web_page_preview: true,
-          reply_markup: createPeerDepositsKeyboard(escrowContractAddress, id)
+          reply_markup: createPeerExplorerBuyKeyboard(intentHash)
         };
         if (chatId === ZKP2P_GROUP_ID) {
           sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
@@ -2112,7 +2113,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
           threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
           content: toDiscordMarkdown(message),
-          components: linkButton('View on Peer', PEER_DEPOSITS_URL)
+          components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
         });
 
         await Promise.all(interestedUsers.map(async (chatId) => {
@@ -2121,7 +2122,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           const sendOptions = {
             parse_mode: 'Markdown',
             disable_web_page_preview: true,
-            reply_markup: createPeerDepositsKeyboard(escrow, id)
+            reply_markup: createPeerExplorerBuyKeyboard(intentHash)
           };
           if (chatId === ZKP2P_GROUP_ID) sendOptions.message_thread_id = ZKP2P_TOPIC_ID;
           await sendTelegramNotification(chatId, message, sendOptions, 'buy order created alert');

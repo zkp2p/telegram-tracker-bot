@@ -137,6 +137,13 @@ function formatElapsedTime(startTimestamp, endTimestamp) {
   return '<1m';
 }
 
+function peerExplorerBuyUrl(intentHash) {
+  // A value that is not an intent hash opens Activity search, as on the web app.
+  return /^0x[0-9a-fA-F]{64}$/.test(intentHash)
+    ? `${PEER_APP_BASE_URL}/explorer/buy/${intentHash.toLowerCase()}`
+    : `${PEER_APP_BASE_URL}/activity?q=${encodeURIComponent(intentHash)}`;
+}
+
 function peerExplorerSellUrl(escrowAddress, depositId) {
   const address = String(escrowAddress || '').trim().toLowerCase();
   const id = String(depositId ?? '').trim();
@@ -169,11 +176,11 @@ function createPeerExplorerSellKeyboard(escrowAddress, depositId) {
   };
 }
 
-function createPeerDepositsKeyboard(escrowAddress, depositId) {
+function createPeerExplorerBuyKeyboard(intentHash) {
   return {
     inline_keyboard: [[{
       text: 'View on Peer',
-      url: peerDepositUrl(escrowAddress, depositId)
+      url: peerExplorerBuyUrl(intentHash)
     }]]
   };
 }
@@ -294,7 +301,7 @@ module.exports = {
   buildBuyOrderStatusMessage,
   buildSellOrderCreatedMessage,
   buildSniperMessage,
-  createPeerDepositsKeyboard,
+  createPeerExplorerBuyKeyboard,
   createPeerExplorerSellKeyboard,
   createTakeOnWebKeyboard,
   formatAlertTime,
@@ -304,5 +311,6 @@ module.exports = {
   formatPlatform,
   formatUSDCAmount,
   getCurrencyEmoji,
-  peerDepositUrl
+  peerDepositUrl,
+  peerExplorerBuyUrl
 };

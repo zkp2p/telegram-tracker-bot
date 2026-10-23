@@ -22,11 +22,12 @@ const {
   buildBuyOrderStatusMessage,
   buildSellOrderCreatedMessage,
   buildSniperMessage,
-  createPeerDepositsKeyboard,
+  createPeerExplorerBuyKeyboard,
   createPeerExplorerSellKeyboard,
   createTakeOnWebKeyboard,
   formatElapsedTime,
-  formatPlatform
+  formatPlatform,
+  peerExplorerBuyUrl
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
@@ -460,7 +461,7 @@ describe('Human-readable alerts', () => {
     assert.equal(formatPlatform('xmoney'), 'X Money');
   });
 
-  it('builds canonical explorer and Peer action links', () => {
+  it('links sell order and deposit event alerts to the explorer sell page', () => {
     assert.deepEqual(createPeerExplorerSellKeyboard(CONTRACT_ADDRESSES.escrowV2.toUpperCase(), 17), {
       inline_keyboard: [[{
         text: 'View on Peer',
@@ -471,12 +472,28 @@ describe('Human-readable alerts', () => {
       createPeerExplorerSellKeyboard(undefined, 17).inline_keyboard[0][0].url,
       'https://app.peer.xyz/activity?q=17'
     );
-    assert.deepEqual(createPeerDepositsKeyboard(CONTRACT_ADDRESSES.escrowV2, 17), {
-      inline_keyboard: [[{
-        text: 'View on Peer',
-        url: `https://app.peer.xyz/deposit/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}/17`
-      }]]
+  });
+
+  it('links buy order alerts to the explorer buy page', () => {
+    const intentHash = '0x' + 'AB'.repeat(32);
+    const iface = new Interface(modernOrchestratorAbi);
+    const log = encodeLog(
+      iface,
+      'IntentPruned',
+      [intentHash],
+      [],
+      CONTRACT_ADDRESSES.orchestratorV3
+    );
+    const buyUrl = 'https://app.peer.xyz/explorer/buy/0x' + 'ab'.repeat(32);
+
+    assert.deepEqual(createPeerExplorerBuyKeyboard(iface.parseLog(log).args.intentHash), {
+      inline_keyboard: [[{ text: 'View on Peer', url: buyUrl }]]
     });
+    assert.equal(peerExplorerBuyUrl(intentHash), buyUrl);
+    assert.equal(peerExplorerBuyUrl('0x123'), 'https://app.peer.xyz/activity?q=0x123');
+  });
+
+  it('keeps snipe alerts on the web deposit page', () => {
     assert.deepEqual(createTakeOnWebKeyboard(CONTRACT_ADDRESSES.escrowV2, 17), {
       inline_keyboard: [[{
         text: 'Take on web',
@@ -484,7 +501,7 @@ describe('Human-readable alerts', () => {
       }]]
     });
     assert.equal(
-      createPeerDepositsKeyboard().inline_keyboard[0][0].url,
+      createTakeOnWebKeyboard().inline_keyboard[0][0].url,
       'https://app.peer.xyz/deposits'
     );
   });
