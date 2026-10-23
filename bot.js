@@ -20,7 +20,7 @@ const {
   buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
-  createPeerlyticsKeyboard,
+  createPeerExplorerSellKeyboard,
   createTakeOnWebKeyboard
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
@@ -1016,9 +1016,6 @@ const currencyHashToCode = {
 
 const getFiatCode = (hash) => currencyHashToCode[hash.toLowerCase()] || '❓ Unknown';
 
-const createDepositKeyboard = (depositId, escrowAddress = escrowContractAddress) =>
-  createPeerlyticsKeyboard(peerlyticsDepositUrl(escrowAddress, depositId));
-
 // Fetch rate from oracle adapter contract
 async function getOracleRate(adapterAddress, adapterConfig) {
   try {
@@ -1503,7 +1500,7 @@ const handleContractEvent = async (log) => {
             const sendOptions = { 
               parse_mode: 'Markdown', 
               disable_web_page_preview: true,
-              reply_markup: createDepositKeyboard(topicDepositId)
+              reply_markup: createPeerExplorerSellKeyboard(escrowContractAddress, topicDepositId)
             };
             if (chatId === ZKP2P_GROUP_ID) {
               sendOptions.message_thread_id = ZKP2P_TOPIC_ID;

@@ -23,12 +23,10 @@ const {
   buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
-  createPeerlyticsKeyboard,
+  createPeerExplorerSellKeyboard,
   createTakeOnWebKeyboard,
   formatElapsedTime,
-  formatPlatform,
-  peerlyticsDepositUrl,
-  peerlyticsIntentUrl
+  formatPlatform
 } = require('./src/alerts');
 const { resolveBlockTimestamp } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
@@ -300,7 +298,6 @@ describe('Platform resolution', () => {
 
 describe('Human-readable alerts', () => {
   const timestamp = Date.UTC(2026, 7, 6, 18, 42) / 1000;
-  const intentHash = '0x' + 'AB'.repeat(32);
 
   it('summarizes a created buy order without protocol internals', () => {
     const message = buildBuyOrderCreatedMessage({
@@ -464,22 +461,15 @@ describe('Human-readable alerts', () => {
   });
 
   it('builds canonical explorer and Peer action links', () => {
+    assert.deepEqual(createPeerExplorerSellKeyboard(CONTRACT_ADDRESSES.escrowV2.toUpperCase(), 17), {
+      inline_keyboard: [[{
+        text: 'View on Peer',
+        url: `https://app.peer.xyz/explorer/sell/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}_17`
+      }]]
+    });
     assert.equal(
-      peerlyticsIntentUrl(intentHash),
-      `https://peerlytics.xyz/explorer/intent/${intentHash.toLowerCase()}`
-    );
-    assert.equal(
-      peerlyticsDepositUrl(CONTRACT_ADDRESSES.escrowV2.toUpperCase(), 17),
-      `https://peerlytics.xyz/explorer/deposit/${CONTRACT_ADDRESSES.escrowV2.toLowerCase()}_17`
-    );
-    assert.deepEqual(
-      createPeerlyticsKeyboard(peerlyticsIntentUrl(intentHash)),
-      {
-        inline_keyboard: [[{
-          text: 'View on Peerlytics',
-          url: `https://peerlytics.xyz/explorer/intent/${intentHash.toLowerCase()}`
-        }]]
-      }
+      createPeerExplorerSellKeyboard(undefined, 17).inline_keyboard[0][0].url,
+      'https://app.peer.xyz/activity?q=17'
     );
     assert.deepEqual(createPeerDepositsKeyboard(CONTRACT_ADDRESSES.escrowV2, 17), {
       inline_keyboard: [[{

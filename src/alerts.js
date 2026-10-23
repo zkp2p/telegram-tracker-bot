@@ -1,4 +1,3 @@
-const PEERLYTICS_BASE_URL = 'https://peerlytics.xyz';
 const PEER_APP_BASE_URL = 'https://app.peer.xyz';
 const PEER_DEPOSITS_URL = `${PEER_APP_BASE_URL}/deposits`;
 const MOBILE_ONBOARD_URL = 'https://mobile.zkp2p.xyz/onboard';
@@ -138,23 +137,16 @@ function formatElapsedTime(startTimestamp, endTimestamp) {
   return '<1m';
 }
 
-function peerlyticsIntentUrl(intentHash) {
-  const normalized = String(intentHash || '').trim().toLowerCase();
-  return normalized
-    ? `${PEERLYTICS_BASE_URL}/explorer/intent/${encodeURIComponent(normalized)}`
-    : `${PEERLYTICS_BASE_URL}/explorer`;
-}
-
-function peerlyticsDepositUrl(escrowAddress, depositId) {
+function peerExplorerSellUrl(escrowAddress, depositId) {
   const address = String(escrowAddress || '').trim().toLowerCase();
   const id = String(depositId ?? '').trim();
-  const routeId = /^0x[0-9a-f]{40}$/.test(address) && /^\d+$/.test(id)
-    ? `${address}_${id}`
-    : id;
 
-  return routeId
-    ? `${PEERLYTICS_BASE_URL}/explorer/deposit/${encodeURIComponent(routeId)}`
-    : `${PEERLYTICS_BASE_URL}/explorer`;
+  // A bare deposit ID can name sells in several escrows; search shows the choices.
+  if (!/^0x[0-9a-f]{40}$/.test(address) || !/^\d+$/.test(id)) {
+    return `${PEER_APP_BASE_URL}/activity?q=${encodeURIComponent(id)}`;
+  }
+
+  return `${PEER_APP_BASE_URL}/explorer/sell/${encodeURIComponent(`${address}_${id}`)}`;
 }
 
 function peerDepositUrl(escrowAddress, depositId) {
@@ -168,11 +160,11 @@ function peerDepositUrl(escrowAddress, depositId) {
   return `${PEER_APP_BASE_URL}/deposit/${encodeURIComponent(address)}/${encodeURIComponent(id)}`;
 }
 
-function createPeerlyticsKeyboard(url) {
+function createPeerExplorerSellKeyboard(escrowAddress, depositId) {
   return {
     inline_keyboard: [[{
-      text: 'View on Peerlytics',
-      url
+      text: 'View on Peer',
+      url: peerExplorerSellUrl(escrowAddress, depositId)
     }]]
   };
 }
@@ -303,7 +295,7 @@ module.exports = {
   buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerDepositsKeyboard,
-  createPeerlyticsKeyboard,
+  createPeerExplorerSellKeyboard,
   createTakeOnWebKeyboard,
   formatAlertTime,
   formatElapsedTime,
@@ -312,7 +304,5 @@ module.exports = {
   formatPlatform,
   formatUSDCAmount,
   getCurrencyEmoji,
-  peerDepositUrl,
-  peerlyticsDepositUrl,
-  peerlyticsIntentUrl
+  peerDepositUrl
 };
