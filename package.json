@@ -15,7 +15,7 @@
   "type": "commonjs",
   "description": "Telegram alerts for ZKP2P escrow and orchestrator events on Base",
   "engines": {
-    "node": ">=22"
+    "node": "22.23.4"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
