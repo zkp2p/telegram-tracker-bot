@@ -1,0 +1,10 @@
+service: telegram-tracker
+region: us-east-1
+environments:
+  prod:
+    branch: releases/prod
+    instanceId: i-0da4a896fd49398b5
+    roleArn: arn:aws:iam::411399509833:role/peer-deploy-telegram-tracker-prod
+    ssmDocument: peer-deploy-telegram-tracker-prod
+    logGroup: /peer/deploy/telegram-tracker
+    ci: required
