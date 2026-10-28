@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [releases/prod]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    permissions:
+      contents: read
+      id-token: write
+    uses: zkp2p/.github/.github/workflows/build-deploy-image-public.yml@55da14159305d36a9f576ad818c9b79602db8954 # main (zkp2p/.github#12)
+    with:
+      dockerfile: deploy/Dockerfile
+      image-name: peer-telegram-tracker
+      artifact-name: telegram-tracker-image
+      artifact-role-arn: arn:aws:iam::411399509833:role/peer-deploy-artifacts-telegram-tracker
+  deploy:
+    needs: image
+    permissions:
+      contents: read
+      id-token: write
+      deployments: write
+      actions: write
+    uses: zkp2p/.github/.github/workflows/ssm-deploy.yml@f08700b59c1b34c5e76974ea2e512799e1ccdee5
+    with:
+      mode: image
+      artifact-key: ${{ needs.image.outputs.artifact-key }}
+      manifest-sha256: ${{ needs.image.outputs.manifest-sha256 }}
+      image-id: ${{ needs.image.outputs.image-id }}
+      source-sha: ${{ github.sha }}
+      allow-key-removal: false
+      runner: ubuntu-latest
