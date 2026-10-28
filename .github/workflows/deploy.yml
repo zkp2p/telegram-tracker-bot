@@ -30,7 +30,7 @@ jobs:
       id-token: write
       deployments: write
       actions: write
-    uses: zkp2p/.github/.github/workflows/ssm-deploy.yml@f08700b59c1b34c5e76974ea2e512799e1ccdee5
+    uses: zkp2p/.github/.github/workflows/ssm-deploy.yml@3d9ed60f9549d454930687d08573fc67b6e8e965
     with:
       mode: image
       artifact-key: ${{ needs.image.outputs.artifact-key }}
