@@ -13,7 +13,8 @@ const {
   isQuotedConversionRate,
   legacyEscrowAbi,
   modernOrchestratorAbi,
-  orchestratorAbi
+  orchestratorAbi,
+  orchestratorV4Abi
 } = require('./src/contracts');
 const { createAddressRouter } = require('./src/resilient-websocket-provider');
 const { createTelegramNotifier } = require('./src/telegram');
@@ -168,9 +169,9 @@ describe('Base deployment configuration', () => {
     assert.equal(isQuotedConversionRate(332420988000000000000n), true);
   });
 
-  it('contains the six independently deployed contracts monitored by the bot', () => {
-    assert.equal(Object.keys(CONTRACT_ADDRESSES).length, 6);
-    assert.equal(new Set(Object.values(CONTRACT_ADDRESSES).map((value) => value.toLowerCase())).size, 6);
+  it('contains the seven independently deployed contracts monitored by the bot', () => {
+    assert.equal(Object.keys(CONTRACT_ADDRESSES).length, 7);
+    assert.equal(new Set(Object.values(CONTRACT_ADDRESSES).map((value) => value.toLowerCase())).size, 7);
     for (const address of Object.values(CONTRACT_ADDRESSES)) {
       assert.match(address, /^0x[0-9a-fA-F]{40}$/);
     }
@@ -180,6 +181,13 @@ describe('Base deployment configuration', () => {
     assert.equal(
       CONTRACT_ADDRESSES.orchestratorV3.toLowerCase(),
       '0x014025fde093f8701d86e9f38e2c3a9b779cb5c7'
+    );
+  });
+
+  it('uses the production OrchestratorV4 deployment', () => {
+    assert.equal(
+      CONTRACT_ADDRESSES.orchestratorV4.toLowerCase(),
+      '0x74c55679268fafb493864915ad16a320ab8c40ba'
     );
   });
 
@@ -263,6 +271,70 @@ describe('ABI compatibility', () => {
     assert.equal(parsed.name, 'IntentSignaled');
     assert.equal(parsed.args.paymentMethod, paymentMethod);
     assert.equal(Number(parsed.args.depositId), 10);
+  });
+
+  it('matches the lifecycle topics emitted by the deployed OrchestratorV4', () => {
+    const iface = new Interface(orchestratorV4Abi);
+    assert.equal(
+      iface.getEvent('IntentSignaled').topicHash,
+      '0x86d435fa0569b6a642b8faf114b295317d619128afe15d2543e22b250165fc9b'
+    );
+    assert.equal(
+      iface.getEvent('IntentFulfilled').topicHash,
+      '0xb41faea6eb34bcf4e3b4bae83094f4d89e0d703af2f1158f334ac98c8cd1a4ca'
+    );
+    assert.equal(
+      iface.getEvent('IntentPruned').topicHash,
+      '0x95eadd9e42ccacb548c6389441b53e6eebec39e11adaea9029a25fe1222483e0'
+    );
+  });
+
+  it('does not parse O4 intent events with the O3 ABI', () => {
+    const o3 = new Interface(modernOrchestratorAbi);
+    const o4 = new Interface(orchestratorV4Abi);
+    for (const eventName of ['IntentSignaled', 'IntentFulfilled']) {
+      assert.notEqual(o3.getEvent(eventName).topicHash, o4.getEvent(eventName).topicHash);
+    }
+  });
+
+  it('parses O4 IntentSignaled and IntentFulfilled events', () => {
+    const iface = new Interface(orchestratorV4Abi);
+    const intentHash = '0x' + 'bb'.repeat(32);
+    const currency = '0xc4ae21aac0c6549d71dd96035b7e0bdb6c79ebdba8891b666115bc976d16a29e';
+    const owner = '0x' + '55'.repeat(20);
+    const recipient = '0x' + '66'.repeat(20);
+    const signaled = iface.parseLog(encodeLog(
+      iface,
+      'IntentSignaled',
+      [intentHash, CONTRACT_ADDRESSES.escrowV2, 12n],
+      [
+        ACTIVE_PAYMENT_METHODS.venmo,
+        owner,
+        recipient,
+        25000000n,
+        currency,
+        1000000000000000000n,
+        1700000000n,
+        '0x' + '00'.repeat(32),
+        '0x' + '00'.repeat(20)
+      ],
+      CONTRACT_ADDRESSES.orchestratorV4
+    ));
+    assert.equal(signaled.name, 'IntentSignaled');
+    assert.equal(signaled.args.paymentMethod, ACTIVE_PAYMENT_METHODS.venmo);
+    assert.equal(Number(signaled.args.depositId), 12);
+    assert.equal(signaled.args.amount, 25000000n);
+
+    const fulfilled = iface.parseLog(encodeLog(
+      iface,
+      'IntentFulfilled',
+      [intentHash, recipient],
+      [24750000n, owner],
+      CONTRACT_ADDRESSES.orchestratorV4
+    ));
+    assert.equal(fulfilled.name, 'IntentFulfilled');
+    assert.equal(fulfilled.args.intentHash, intentHash);
+    assert.equal(fulfilled.args.amount, 24750000n);
   });
 
   it('does not cross-parse legacy and modern escrow currency events', () => {
@@ -508,7 +580,7 @@ describe('Human-readable alerts', () => {
 });
 
 describe('Shared WebSocket routing', () => {
-  it('routes all six contract addresses through one address router', async () => {
+  it('routes all seven contract addresses through one address router', async () => {
     const calls = [];
     const router = createAddressRouter(
       Object.entries(CONTRACT_ADDRESSES).map(([name, address]) => ({
@@ -522,8 +594,8 @@ describe('Shared WebSocket routing', () => {
       const routed = await router.route({ address, blockNumber: 100 });
       assert.equal(routed, true, name);
     }
-    assert.equal(calls.length, 6);
-    assert.equal(router.addresses.length, 6);
+    assert.equal(calls.length, 7);
+    assert.equal(router.addresses.length, 7);
   });
 
   it('ignores logs from unknown contracts', async () => {

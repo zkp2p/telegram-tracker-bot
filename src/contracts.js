@@ -4,7 +4,8 @@ const CONTRACT_ADDRESSES = Object.freeze({
   escrowV2: '0x777777779d229cdF3110e9de47943791c26300Ef',
   orchestrator: '0x88888883Ed048FF0a415271B28b2F52d431810D0',
   orchestratorV2: '0x888888359E981B5225CA48fbCdCeff702FC3b888',
-  orchestratorV3: '0x014025fDE093f8701d86e9f38e2C3a9b779cb5c7'
+  orchestratorV3: '0x014025fDE093f8701d86e9f38e2C3a9b779cb5c7',
+  orchestratorV4: '0x74c55679268FAfB493864915aD16A320AB8c40Ba'
 });
 
 // Active Base payment methods from zkp2p-contracts deployment outputs and the
@@ -96,6 +97,14 @@ const orchestratorAbi = [
   'event IntentPruned(bytes32 indexed intentHash)'
 ];
 
+// OrchestratorV4 adds groupId and arbitrator to IntentSignaled and reports
+// releasedBy instead of isManualRelease, so both topics differ from O1-O3.
+const orchestratorV4Abi = [
+  'event IntentSignaled(bytes32 indexed intentHash, address indexed escrow, uint256 indexed depositId, bytes32 paymentMethod, address owner, address to, uint256 amount, bytes32 fiatCurrency, uint256 conversionRate, uint256 timestamp, bytes32 groupId, address arbitrator)',
+  'event IntentFulfilled(bytes32 indexed intentHash, address indexed fundsTransferredTo, uint256 amount, address releasedBy)',
+  'event IntentPruned(bytes32 indexed intentHash)'
+];
+
 const escrowAbi = [
   'event DepositReceived(uint256 indexed depositId, address indexed depositor, address indexed token, uint256 amount, tuple(uint256,uint256) intentAmountRange, address delegate, address intentGuardian)',
   'event DepositCurrencyAdded(uint256 indexed depositId, bytes32 indexed paymentMethod, bytes32 indexed currency, uint256 minConversionRate)',
@@ -131,5 +140,6 @@ module.exports = {
   legacyEscrowAbi,
   modernOrchestratorAbi,
   orchestratorAbi,
+  orchestratorV4Abi,
   platformMapping
 };
