@@ -11,7 +11,8 @@ const {
   isQuotedConversionRate,
   legacyEscrowAbi,
   modernOrchestratorAbi,
-  orchestratorAbi
+  orchestratorAbi,
+  orchestratorV4Abi
 } = require('./src/contracts');
 const {
   PEER_DEPOSITS_URL,
@@ -683,7 +684,8 @@ const {
   escrowV2: escrowV2ContractAddress,
   orchestrator: orchestratorContractAddress,
   orchestratorV2: orchestratorV2ContractAddress,
-  orchestratorV3: orchestratorV3ContractAddress
+  orchestratorV3: orchestratorV3ContractAddress,
+  orchestratorV4: orchestratorV4ContractAddress
 } = CONTRACT_ADDRESSES;
 
 const iface = new Interface(legacyEscrowAbi);
@@ -691,6 +693,7 @@ const orchestratorIface = new Interface(orchestratorAbi);
 const escrowV3Iface = new Interface(escrowAbi);
 const escrowV2Iface = new Interface(escrowV2Abi);
 const orchestratorV2Iface = new Interface(modernOrchestratorAbi);
+const orchestratorV4Iface = new Interface(orchestratorV4Abi);
 const pendingTransactions = new Map(); // txHash -> {fulfilled: Set, pruned: Set, blockNumber: number, rawIntents: Map}
 const processingScheduled = new Set(); // Track which transactions are scheduled for processing
 
@@ -1315,7 +1318,7 @@ bot.onText(/\/status/, async (msg) => {
     let message = `🔧 *System Status:*
 
 • *Base event stream:* ${eventStreamStatus}
-• *Contracts monitored:* ${contractSubscriptions.length} (including OrchestratorV3)
+• *Contracts monitored:* ${contractSubscriptions.length} (including OrchestratorV4)
 • *Database:* ${dbStatus}
 • *Telegram:* ${botStatus}
 
@@ -2147,6 +2150,7 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
 const handleOrchestratorEvent = createOrchestratorEventHandler('O1', orchestratorIface);
 const handleOrchestratorV2Event = createOrchestratorEventHandler('O2', orchestratorV2Iface);
 const handleOrchestratorV3Event = createOrchestratorEventHandler('O3', orchestratorV2Iface);
+const handleOrchestratorV4Event = createOrchestratorEventHandler('O4', orchestratorV4Iface);
 
 const contractSubscriptions = [
   { name: 'Legacy Escrow', address: escrowContractAddress, handler: handleContractEvent },
@@ -2154,7 +2158,8 @@ const contractSubscriptions = [
   { name: 'EscrowV2', address: escrowV2ContractAddress, handler: handleEscrowV2Event },
   { name: 'Orchestrator', address: orchestratorContractAddress, handler: handleOrchestratorEvent },
   { name: 'OrchestratorV2', address: orchestratorV2ContractAddress, handler: handleOrchestratorV2Event },
-  { name: 'OrchestratorV3', address: orchestratorV3ContractAddress, handler: handleOrchestratorV3Event }
+  { name: 'OrchestratorV3', address: orchestratorV3ContractAddress, handler: handleOrchestratorV3Event },
+  { name: 'OrchestratorV4', address: orchestratorV4ContractAddress, handler: handleOrchestratorV4Event }
 ];
 
 const eventProvider = new ResilientWebSocketProvider(process.env.BASE_RPC, contractSubscriptions);

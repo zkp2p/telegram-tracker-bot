@@ -1,10 +1,10 @@
 # ZKP2P Telegram Tracker Bot
 
-Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, including the production OrchestratorV3 lifecycle.
+Telegram bot for tracking ZKP2P escrow and intent events on Base in real time, including the production OrchestratorV4 lifecycle.
 
 ## 🚀 Features
-- **Full production lifecycle**: Monitors the legacy stack, Escrow/EscrowV2, and Orchestrator V1/V2/V3
-- **Efficient real-time tracking**: Routes six contract subscriptions through one resilient WebSocket connection
+- **Full production lifecycle**: Monitors the legacy stack, Escrow/EscrowV2, and Orchestrator V1/V2/V3/V4
+- **Efficient real-time tracking**: Routes seven contract subscriptions through one resilient WebSocket connection
 - **Event notifications**: Get buy-order alerts for intents and sell-order alerts for new deposits
 - **Sniper alerts**: Automated arbitrage notifications when deposits offer better exchange rates than market
 - **Current payment methods**: Alipay, Cash App, Chime, Mercado Pago, Monobank, Monzo, PayPal, Revolut, Venmo, Wise, X Money, and Zelle
@@ -64,7 +64,7 @@ EXCHANGE_API_KEY=your_exchange_rate_api_key
 - `DepositWithdrawn` - Deposits withdrawn (ignored)
 - `DepositClosed` - Deposits closed (ignored)
 
-Orchestrator V1, V2, and V3 share the lifecycle event signatures above. Contract addresses and active payment-method hashes are centralized in `src/contracts.js` and should be refreshed from the standalone `zkp2p-contracts` production deployment plus live registry state.
+Orchestrator V1, V2, and V3 share the lifecycle event signatures above; V4 adds `groupId` and `arbitrator` to `IntentSignaled` and reports `releasedBy` in `IntentFulfilled`. Contract addresses and active payment-method hashes are centralized in `src/contracts.js` and should be refreshed from the standalone `zkp2p-contracts` production deployment plus live registry state.
 
 ## Development
 
