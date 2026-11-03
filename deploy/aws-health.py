@@ -11,6 +11,7 @@ TARGET = json.loads(Path('/etc/peer-telegram-tracker/health-target.json').read_t
 REGION = TARGET['region']
 ACCOUNT = TARGET['accountId']
 INSTANCE = TARGET['instanceId']
+CONTAINER = 'peer-telegram-tracker'
 AWS_ENV = {
     'PATH': '/usr/local/bin:/usr/bin:/bin',
     'AWS_REGION': REGION,
@@ -45,12 +46,33 @@ def read_expected_image(
         return json.loads(build.read_text())["app"]["id"]
 
 
+def read_runtime_config():
+    """Read the running container's bound config, failing closed without logging."""
+    try:
+        result = subprocess.run(
+            ['docker', 'inspect', CONTAINER, '--format',
+             '{"running":{{json .State.Running}},"mounts":{{json .Mounts}}}'],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode:
+            return {}
+        container = json.loads(result.stdout)
+        if container['running'] is not True:
+            return {}
+        for mount in container['mounts']:
+            if mount['Type'] == 'bind' and mount['Destination'] == '/run/secrets/runtime.json':
+                return json.loads(Path(mount['Source']).read_text())
+    except Exception:
+        pass
+    return {}
+
+
 def main():
     identity = aws('sts', 'get-caller-identity')
     expected = f"arn:aws:sts::{ACCOUNT}:assumed-role/{TARGET['roleName']}/{INSTANCE}"
     assert identity['Account'] == ACCOUNT and identity['Arn'] == expected
     checks = {}
-    for unit in ['peer-telegram-tracker']:
+    for unit in [CONTAINER]:
         checks[unit] = subprocess.run(
             ['systemctl', 'is-active', '--quiet', unit], capture_output=True,
         ).returncode == 0
@@ -58,14 +80,14 @@ def main():
     try:
         expected_image = read_expected_image()
         result = subprocess.run(
-            ['docker', 'inspect', 'peer-telegram-tracker'], capture_output=True,
+            ['docker', 'inspect', CONTAINER], capture_output=True,
             timeout=15,
         )
         checks['image'] = result.returncode == 0 and json.loads(result.stdout)[0]['Image'] == expected_image
     except Exception:
         pass
     # Functional dependency checks are separate from first real alert delivery.
-    v=json.loads(Path('/etc/peer-telegram-tracker/runtime.json').read_text())
+    v = read_runtime_config()
     try:
         with urllib.request.urlopen('https://api.telegram.org/bot'+v['TELEGRAM_BOT_TOKEN']+'/getMe',timeout=10)as r:
             checks['telegramIdentity']=r.status==200 and json.load(r)['result']['id']==8665567460
