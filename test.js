@@ -1,5 +1,9 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 const { AbiCoder, Interface, toBeHex, zeroPadValue } = require('ethers');
 const { TelegramBot } = require('node-telegram-bot-api');
 const {
@@ -39,6 +43,125 @@ const {
 } = require('./src/recipients');
 
 const coder = AbiCoder.defaultAbiCoder();
+
+describe('Startup configuration', () => {
+  const validEnv = Object.freeze({
+    TELEGRAM_BOT_TOKEN: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+    SUPABASE_URL: 'https://project.supabase.co',
+    SUPABASE_ANON_KEY: 'supabase-key-marker',
+    BASE_RPC: 'wss://rpc.example.test/v2/rpc-key-marker',
+    EXCHANGE_API_KEY: 'exchange-key-marker',
+    DISCORD_ORDERS_WEBHOOK_URL: 'https://discord.com/api/webhooks/123/orders-marker',
+    DISCORD_SNIPER_WEBHOOK_URL: 'https://discord.com/api/webhooks/456/sniper-marker'
+  });
+
+  it('accepts valid configuration without mutating it; NODE_ENV is optional', () => {
+    const { validateConfig } = require('./src/config');
+    assert.deepEqual(validateConfig(validEnv), []);
+    assert.deepEqual(validateConfig({ ...validEnv, NODE_ENV: 'production' }), []);
+  });
+
+  for (const key of Object.keys(validEnv)) {
+    it(`reports missing or blank ${key}`, () => {
+      const { validateConfig } = require('./src/config');
+      const env = { ...validEnv };
+      delete env[key];
+      assert.deepEqual(validateConfig(env), [`${key}: missing`]);
+      for (const value of ['', ' \t\r\n ']) {
+        assert.deepEqual(validateConfig({ ...validEnv, [key]: value }), [`${key}: missing`]);
+      }
+    });
+  }
+
+  for (const key of ['SUPABASE_URL', 'BASE_RPC', 'DISCORD_ORDERS_WEBHOOK_URL', 'DISCORD_SNIPER_WEBHOOK_URL']) {
+    it(`rejects malformed URLs and unsupported schemes for ${key}`, () => {
+      const { validateConfig } = require('./src/config');
+      for (const value of ['url-marker', '/relative-marker', 'https://', 'https:host-marker',
+        'https://bad host-marker', 'https://host-marker:99999', 'ftp://host-marker']) {
+        assert.deepEqual(validateConfig({ ...validEnv, [key]: value }), [`${key}: invalid`]);
+      }
+      if (key !== 'BASE_RPC') {
+        for (const scheme of ['http', 'ws', 'wss']) {
+          assert.deepEqual(validateConfig({ ...validEnv, [key]: `${scheme}://host-marker` }), [`${key}: invalid`]);
+        }
+      }
+    });
+  }
+
+  it('accepts all WebSocket-supported RPC schemes and rejects fragments', () => {
+    const { validateConfig } = require('./src/config');
+    for (const scheme of ['ws', 'wss', 'http', 'https']) {
+      const BASE_RPC = `${scheme}://rpc.example.test/v2/key-marker?apiKey=query-marker`;
+      assert.deepEqual(validateConfig({ ...validEnv, BASE_RPC }), []);
+      assert.deepEqual(validateConfig({ ...validEnv, BASE_RPC: `${BASE_RPC}#fragment-marker` }), ['BASE_RPC: invalid']);
+    }
+  });
+
+  it('checks Telegram token characters without assuming fixed lengths', () => {
+    const { validateConfig } = require('./src/config');
+    for (const TELEGRAM_BOT_TOKEN of ['1:a_B-9', '1234567890123:AbCdEf_0123456789-']) {
+      assert.deepEqual(validateConfig({ ...validEnv, TELEGRAM_BOT_TOKEN }), []);
+    }
+    for (const TELEGRAM_BOT_TOKEN of ['token-marker', 'abc:token-marker', '123:', ':token-marker',
+      '123:token marker', '123:token/marker', '123:token:marker', '123:token-marker\n', ' 123:token-marker']) {
+      assert.deepEqual(validateConfig({ ...validEnv, TELEGRAM_BOT_TOKEN }), ['TELEGRAM_BOT_TOKEN: invalid']);
+    }
+  });
+
+  it('reports every problem using only keys and reasons', () => {
+    const { validateConfig } = require('./src/config');
+    const env = { ...validEnv, TELEGRAM_BOT_TOKEN: 'short!', SUPABASE_URL: 'https://secret-marker:bad-port' };
+    delete env.EXCHANGE_API_KEY;
+    const problems = validateConfig(env);
+    assert.deepEqual(problems, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'EXCHANGE_API_KEY: missing']);
+    for (const value of Object.values(env)) assert.equal(problems.join('; ').includes(value), false);
+    assert.equal(problems.join('; ').includes('secret-marker'), false);
+  });
+
+  it('exits 1 with one safe stderr line before loading client dependencies', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'tracker-config-test-'));
+    // Block clients so a regression cannot contact upstreams or start polling.
+    const script = `
+      const Module = require('node:module');
+      const load = Module._load;
+      Module._load = function (id, ...args) {
+        if (['ethers', '@supabase/supabase-js', 'node-telegram-bot-api',
+          './src/resilient-websocket-provider'].includes(id)) {
+          throw new Error('Client dependency loaded before configuration validation');
+        }
+        return load.call(this, id, ...args);
+      };
+      require(${JSON.stringify(require.resolve('./bot'))});
+    `;
+    try {
+      const invalidEnv = { ...validEnv,
+        TELEGRAM_BOT_TOKEN: 'short!',
+        SUPABASE_URL: 'https://supabase-marker:bad-port',
+        BASE_RPC: 'wss://rpc.example.test/#rpc-marker',
+        DISCORD_ORDERS_WEBHOOK_URL: 'http://orders-marker',
+        DISCORD_SNIPER_WEBHOOK_URL: 'sniper-marker'
+      };
+      const missingExchangeEnv = { ...validEnv };
+      delete missingExchangeEnv.EXCHANGE_API_KEY;
+      for (const [env, problems] of [
+        [{}, Object.keys(validEnv).map((key) => `${key}: missing`)],
+        [missingExchangeEnv, ['EXCHANGE_API_KEY: missing']],
+        [invalidEnv, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'BASE_RPC: invalid',
+          'DISCORD_ORDERS_WEBHOOK_URL: invalid', 'DISCORD_SNIPER_WEBHOOK_URL: invalid']]
+      ]) {
+        const result = spawnSync(process.execPath, ['-e', script], { cwd, env, encoding: 'utf8', timeout: 5000 });
+        assert.ifError(result.error);
+        assert.equal(result.status, 1);
+        assert.equal(result.stdout, '');
+        assert.equal(result.stderr, `Invalid configuration: ${problems.join('; ')}\n`);
+        assert.equal(result.stderr.includes('marker'), false);
+        assert.equal(result.stderr.includes('short!'), false);
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('Runtime dependencies', () => {
   it('exposes the Telegram client constructor used by the bot', () => {

@@ -49,10 +49,19 @@ The bot monitors exchange rates and alerts you when new deposits offer better ra
 ```bash
 TELEGRAM_BOT_TOKEN=your_bot_token
 BASE_RPC=wss://your_base_websocket_rpc
-SUPABASE_URL=your_supabase_url
+SUPABASE_URL=https://your_project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_key
 EXCHANGE_API_KEY=your_exchange_rate_api_key
+DISCORD_ORDERS_WEBHOOK_URL=https://discord.com/api/webhooks/your_orders_id/your_orders_token
+DISCORD_SNIPER_WEBHOOK_URL=https://discord.com/api/webhooks/your_sniper_id/your_sniper_token
 ```
+
+All seven values above are required; `NODE_ENV` is optional. Startup validates
+configuration before creating clients and exits 1 with one stderr line naming bad
+keys as missing or invalid, never their values, so a bad config deploy fails the
+30-second health check and rolls back. Supabase and Discord URLs require HTTPS;
+`BASE_RPC` accepts `ws:`, `wss:`, `http:` or `https:` without fragments, but the
+endpoint must support WebSocket connections.
 
 ## 📊 Supported Events
 - `DepositReceived` - New sell orders created; batched with payment-method events for one complete alert

@@ -44,6 +44,12 @@ mounted read-only at `/run/secrets/runtime.json`. It is not stored in this repo
 or embedded in the image. The runtime wrapper loads it and redacts configured
 credential values from the child process output.
 
+Before creating any clients, startup validates required configuration and URL/token
+shapes. Invalid configuration exits with code 1 and prints one stderr line naming
+only bad keys and whether they are missing or invalid, never their values. This
+fails the deploy's 30-second container-running health check so a bad config deploy
+rolls back.
+
 ## Health monitor and verification
 
 `aws-health.py` checks the service, image, Telegram, Supabase, Base RPC and disk,
