@@ -3,9 +3,13 @@
 ## Continuous deployment
 
 Push to `releases/prod` to deploy through the Peer Deploy Platform. The Deploy
-workflow also supports `workflow_dispatch` on that branch, with no inputs and
-image mode only. Deploys are serialized per branch and never cancel a running
-deployment; key removal is disabled.
+workflow also supports `workflow_dispatch` on that branch. Deploys are serialized
+per branch and never cancel a running deployment; key removal is disabled.
+
+A manual **Deploy** dispatch on `releases/prod` redeploys in `image` mode with
+`reason` `manual`. `peer-config-reconciler` (peer-infra `stacks/config-cd`)
+dispatches `mode=image` with `reason=reconcile`; those runs are named
+`Deploy releases/prod (reconcile)`.
 
 GitHub-hosted `ubuntu-latest` runners build `deploy/Dockerfile`, which runs
 `npm ci`, `npm run check`, `npm test` and production dependency pruning. CI also

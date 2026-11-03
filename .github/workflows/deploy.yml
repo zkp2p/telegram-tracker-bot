@@ -1,9 +1,21 @@
 name: Deploy
+run-name: Deploy ${{ github.ref_name }}${{ inputs.reason == 'reconcile' && ' (reconcile)' || '' }}
 
 on:
   push:
     branches: [releases/prod]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Deployment mode (peer-config-reconciler sends image)
+        type: choice
+        options: [image]
+        default: image
+      reason:
+        description: Who requested the deploy (peer-config-reconciler sends reconcile)
+        type: choice
+        options: [manual, reconcile]
+        default: manual
 
 permissions:
   contents: read
@@ -30,7 +42,7 @@ jobs:
       id-token: write
       deployments: write
       actions: write
-    uses: zkp2p/.github/.github/workflows/ssm-deploy.yml@3d9ed60f9549d454930687d08573fc67b6e8e965
+    uses: zkp2p/.github/.github/workflows/ssm-deploy.yml@f273ccc17c3653ca84442f08726b8f44d584914c
     with:
       mode: image
       artifact-key: ${{ needs.image.outputs.artifact-key }}
