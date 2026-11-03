@@ -1,4 +1,11 @@
 require('dotenv').config();
+const { validateConfig } = require('./src/config');
+const configProblems = validateConfig(process.env);
+if (configProblems.length > 0) {
+  console.error(`Invalid configuration: ${configProblems.join('; ')}`);
+  process.exit(1);
+}
+
 const { JsonRpcProvider, Contract, Interface } = require('ethers');
 const { TelegramBot } = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
