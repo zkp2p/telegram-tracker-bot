@@ -43,10 +43,11 @@ including the `peer-telegram-tracker` service and container restrictions. The
 image uses Node 22.23.4 and `USER 10001:10001`, with command
 `["node", "/opt/peer/runtime.cjs", "bot.js"]`.
 
-Runtime JSON stays host-managed at `/etc/peer-telegram-tracker/runtime.json`,
-mounted read-only at `/run/secrets/runtime.json`. It is not stored in this repo
-or embedded in the image. The runtime wrapper loads it and redacts configured
-credential values from the child process output.
+Runtime JSON is a per-attempt config-cd snapshot under
+`/etc/peer-telegram-tracker/env/`, bind-mounted read-only at
+`/run/secrets/runtime.json`. It is not stored in this repo or embedded in the
+image. The runtime wrapper loads it and redacts configured credential values
+from the child process output.
 
 Before creating any clients, startup validates required configuration and URL/token
 shapes. Invalid configuration exits with code 1 and prints one stderr line naming
@@ -64,6 +65,13 @@ and emits CloudWatch metrics using the EC2 instance role. It reads owner-only
 back to `/var/lib/peer-telegram-tracker-migration/build.json` (`app.id`) only
 when the current rollout file is missing. Invalid metadata fails the image
 check closed.
+
+For credential-dependent checks, the health timer uses `docker inspect
+peer-telegram-tracker --format` to resolve the host file bound at
+`/run/secrets/runtime.json` in the running container. A stopped or missing
+container, missing bind mount, or unreadable/invalid runtime file makes these
+checks report false while metrics are still emitted. It never falls back to
+the legacy runtime file or logs credential values or file contents.
 
 The monitor runs on the host, outside the image. Whenever `deploy/aws-health.py`
 changes, an operator must install the reviewed script at
