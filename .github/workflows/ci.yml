@@ -22,3 +22,20 @@ jobs:
         run: python3 -m unittest discover -s deploy -v
       - name: Build and check image
         run: docker build -f deploy/Dockerfile .
+
+  oidc-trust-check:
+    name: oidc-trust-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROBE_ROLES: "arn:aws:iam::411399509833:role/peer-deploy-artifacts-telegram-tracker arn:aws:iam::411399509833:role/peer-deploy-telegram-tracker-prod arn:aws:iam::411399509833:role/peer-deploy-artifacts-mcp"
+      PROBE_ENVIRONMENT: none
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: oidc-probe
+        run: bash .github/scripts/oidc_probe.sh
