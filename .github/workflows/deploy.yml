@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: zkp2p/.github/.github/workflows/build-deploy-image-public.yml@55da14159305d36a9f576ad818c9b79602db8954 # main (zkp2p/.github#12)
+    uses: zkp2p/.github/.github/workflows/build-deploy-image-public.yml@86a14a92c9eaabba11b6804099f54d851874a47d # zkp2p/.github#23
     with:
       dockerfile: deploy/Dockerfile
       image-name: peer-telegram-tracker
