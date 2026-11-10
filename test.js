@@ -35,7 +35,7 @@ const {
   peerExplorerBuyUrl
 } = require('./src/alerts');
 const { resolveBlockTimestamp, toHttpRpcUrl } = require('./src/chain');
-const { curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
+const { createRateCache, curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
 const {
   OFFICIAL_GROUP_CHAT_ID,
@@ -286,6 +286,7 @@ describe('Market rates from Curator', () => {
   it('defaults to the production Curator and strips trailing slashes', () => {
     assert.equal(curatorApiUrl({}), 'https://api.zkp2p.xyz');
     assert.equal(curatorApiUrl({ CURATOR_API_URL: '' }), 'https://api.zkp2p.xyz');
+    assert.equal(curatorApiUrl({ CURATOR_API_URL: ' \t ' }), 'https://api.zkp2p.xyz');
     assert.equal(curatorApiUrl({ CURATOR_API_URL: ' https://curator.example.test// ' }), baseUrl);
   });
 
@@ -325,12 +326,86 @@ describe('Market rates from Curator', () => {
   });
 
   it('rejects ars-rates replies without a usable USDC quote', async () => {
-    for (const usdc of [undefined, {}, { ask: 1643.035 }, { ask: 0, bid: 1690.503 }, { ask: '1643', bid: null }]) {
+    for (const usdc of [undefined, {}, { ask: 1643.035 }, { ask: 0, bid: 1690.503 }, { ask: '1643', bid: null },
+      { ask: '1643.035', bid: '1690.503' }, { ask: 1643.035, bid: Infinity }]) {
       const { fetchImpl } = reply(arsBody(usdc));
       await assert.rejects(fetchArsUsdcQuote({ baseUrl, fetchImpl }));
     }
     const { fetchImpl } = reply({ success: true, responseObject: { stale: false } });
     await assert.rejects(fetchArsUsdcQuote({ baseUrl, fetchImpl }));
+  });
+});
+
+describe('Market rate cache', () => {
+  const setup = ({ results, ttlMs = 60000, retryAfterMs = 5000 }) => {
+    const state = { time: 1000, loads: 0, errors: [] };
+    const pending = [];
+    const get = createRateCache({
+      ttlMs,
+      retryAfterMs,
+      now: () => state.time,
+      onError: (error) => state.errors.push(error.message),
+      load: () => {
+        const result = results[state.loads];
+        state.loads += 1;
+        return new Promise((resolve, reject) => {
+          pending.push(() => (result instanceof Error ? reject(result) : resolve(result)));
+        });
+      }
+    });
+    const settle = () => pending.shift()();
+    return { get, settle, state };
+  };
+
+  it('shares one request between a burst of concurrent callers', async () => {
+    const { get, settle, state } = setup({ results: [{ EUR: 0.9 }] });
+    const burst = Array.from({ length: 60 }, () => get());
+    assert.equal(state.loads, 1);
+    settle();
+    assert.deepEqual(await Promise.all(burst), Array(60).fill({ EUR: 0.9 }));
+    assert.equal(state.loads, 1);
+  });
+
+  it('reuses a loaded value until it expires, then loads again', async () => {
+    const { get, settle, state } = setup({ results: [1300, 1400] });
+    const first = get();
+    settle();
+    assert.equal(await first, 1300);
+    state.time += 59999;
+    assert.equal(await get(), 1300);
+    assert.equal(state.loads, 1);
+    state.time += 1;
+    const second = get();
+    settle();
+    assert.equal(await second, 1400);
+    assert.equal(state.loads, 2);
+  });
+
+  it('returns null after a failure and does not retry until the delay has passed', async () => {
+    const { get, settle, state } = setup({ results: [new Error('HTTP 429'), 1300] });
+    const failed = get();
+    settle();
+    assert.equal(await failed, null);
+    assert.deepEqual(state.errors, ['HTTP 429']);
+    state.time += 4999;
+    assert.equal(await get(), null);
+    assert.equal(state.loads, 1);
+    state.time += 1;
+    const retried = get();
+    settle();
+    assert.equal(await retried, 1300);
+    assert.equal(state.loads, 2);
+  });
+
+  it('does not serve an expired value when the refresh fails', async () => {
+    const { get, settle, state } = setup({ results: [1300, new Error('stale')] });
+    const first = get();
+    settle();
+    await first;
+    state.time += 60000;
+    const refresh = get();
+    settle();
+    assert.equal(await refresh, null);
   });
 });
 

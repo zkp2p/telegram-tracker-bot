@@ -2,7 +2,8 @@ const DEFAULT_CURATOR_API_URL = 'https://api.zkp2p.xyz';
 const REQUEST_TIMEOUT_MS = 5000;
 
 function curatorApiUrl(env) {
-  return (env.CURATOR_API_URL || DEFAULT_CURATOR_API_URL).trim().replace(/\/+$/, '');
+  const configured = (env.CURATOR_API_URL ?? '').trim();
+  return (configured || DEFAULT_CURATOR_API_URL).replace(/\/+$/, '');
 }
 
 async function fetchCuratorMarket(path, { baseUrl, fetchImpl = fetch }) {
@@ -40,10 +41,50 @@ async function fetchArsUsdcQuote(options) {
     throw new Error('Curator ars-rates snapshot is stale');
   }
   const { ask, bid } = dolar?.cripto?.usdc ?? {};
-  if (!(ask > 0) || !(bid > 0)) {
+  const isPrice = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+  if (!isPrice(ask) || !isPrice(bid)) {
     throw new Error('Curator ars-rates is missing the crypto-dollar USDC quote');
   }
   return { ask, bid, midPrice: (ask + bid) / 2 };
 }
 
-module.exports = { curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates };
+/**
+ * Wraps a rate loader for event bursts: a fresh value is reused for ttlMs,
+ * concurrent callers share one request, and a failure is not retried for
+ * retryAfterMs. Curator limits market requests per IP, so each log handler
+ * fetching on its own would get most of a burst rejected.
+ */
+function createRateCache({ load, ttlMs, retryAfterMs, onError, now = Date.now }) {
+  let value = null;
+  let loadedAt = 0;
+  let failedAt = -Infinity;
+  let inFlight = null;
+  return function get() {
+    const time = now();
+    if (value !== null && time - loadedAt < ttlMs) {
+      return Promise.resolve(value);
+    }
+    if (time - failedAt < retryAfterMs) {
+      return Promise.resolve(null);
+    }
+    inFlight ??= load()
+      .then(
+        (loaded) => {
+          value = loaded;
+          loadedAt = now();
+          return loaded;
+        },
+        (error) => {
+          failedAt = now();
+          onError(error);
+          return null;
+        }
+      )
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
+  };
+}
+
+module.exports = { createRateCache, curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates };

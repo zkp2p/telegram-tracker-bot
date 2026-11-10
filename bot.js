@@ -34,7 +34,7 @@ const {
 } = require('./src/alerts');
 const { resolveBlockTimestamp, toHttpRpcUrl } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
-const { curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
+const { createRateCache, curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
 const {
   OFFICIAL_GROUP_CHAT_ID: ZKP2P_GROUP_ID,
   includeOfficialGroup,
@@ -618,55 +618,32 @@ setTimeout(initializeBot, 3000);
 
 
 
-// Exchange rate fetcher
-let exchangeRatesCache = null;
-let lastRatesFetch = 0;
+// Market rate caches. A burst of events shares one Curator request per rate.
 const RATES_CACHE_DURATION = 60000; // 1 minute cache
+const RATES_RETRY_DELAY = 5000; // wait before retrying a failed fetch
 
-// ARS rate cache (CriptoYa crypto-dollar quote, via Curator)
-let arsRateCache = null;
-let lastARSFetch = 0;
-const ARS_CACHE_DURATION = 60000; // 1 minute cache
-
-async function getExchangeRates() {
-  const now = Date.now();
-  
-  // Return cached rates if still fresh
-  if (exchangeRatesCache && (now - lastRatesFetch) < RATES_CACHE_DURATION) {
-    return exchangeRatesCache;
-  }
-  
-  try {
-    exchangeRatesCache = await fetchUsdFxRates({ baseUrl: CURATOR_API_URL });
-    lastRatesFetch = now;
+const getExchangeRates = createRateCache({
+  ttlMs: RATES_CACHE_DURATION,
+  retryAfterMs: RATES_RETRY_DELAY,
+  load: async () => {
+    const rates = await fetchUsdFxRates({ baseUrl: CURATOR_API_URL });
     console.log('📊 Exchange rates updated');
-    return exchangeRatesCache;
-  } catch (error) {
-    console.error('❌ Failed to fetch exchange rates:', error.message);
-    return null;
-  }
-}
+    return rates;
+  },
+  onError: (error) => console.error('❌ Failed to fetch exchange rates:', error.message)
+});
 
-// Fetch the ARS rate (CriptoYa crypto-dollar USDC quote) from Curator
-async function getARSRate() {
-  const now = Date.now();
-  
-  // Return cached rate if still fresh
-  if (arsRateCache && (now - lastARSFetch) < ARS_CACHE_DURATION) {
-    return arsRateCache;
-  }
-  
-  try {
+// ARS uses CriptoYa's crypto-dollar USDC quote, read through Curator
+const getARSRate = createRateCache({
+  ttlMs: RATES_CACHE_DURATION,
+  retryAfterMs: RATES_RETRY_DELAY,
+  load: async () => {
     const { ask, bid, midPrice } = await fetchArsUsdcQuote({ baseUrl: CURATOR_API_URL });
-    arsRateCache = midPrice;
-    lastARSFetch = now;
-    console.log(`📊 ARS rate updated from CriptoYa: ${arsRateCache} ARS/USDC (mid: ask=${ask}, bid=${bid})`);
-    return arsRateCache;
-  } catch (error) {
-    console.error('❌ Failed to fetch ARS rate:', error.message);
-    return null;
-  }
-}
+    console.log(`📊 ARS rate updated from CriptoYa: ${midPrice} ARS/USDC (mid: ask=${ask}, bid=${bid})`);
+    return midPrice;
+  },
+  onError: (error) => console.error('❌ Failed to fetch ARS rate:', error.message)
+});
 
 
 const {
