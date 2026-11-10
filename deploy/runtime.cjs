@@ -7,9 +7,13 @@ for (const [name, value] of Object.entries(config)) {
 }
 // The tracker may include authenticated upstream URLs in diagnostics. Redact
 // credential values before either output stream reaches the host log driver.
-const secrets = Object.entries(config)
-  .filter(([name, value]) => value.length >= 16)
-  .map(([, value]) => value)
+// A URL value is also redacted without its scheme: the tracker derives an
+// https:// endpoint from the wss:// one, and both carry the same key.
+const MIN_SECRET_LENGTH = 16;
+const secrets = [...new Set(Object.values(config)
+  .filter((value) => value.length >= MIN_SECRET_LENGTH)
+  .flatMap((value) => [value, value.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')]))]
+  .filter((value) => value.length >= MIN_SECRET_LENGTH)
   .sort((a, b) => b.length - a.length);
 if (require.main === module) {
   const { spawn } = require('node:child_process');

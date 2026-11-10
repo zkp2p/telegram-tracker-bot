@@ -17,18 +17,31 @@ const checks = {
   SUPABASE_ANON_KEY: null,
   // ethers uses ws, which maps http(s) to ws(s) and rejects URL fragments.
   BASE_RPC: (value) => isUrl(value, ['ws:', 'wss:', 'http:', 'https:'], false),
-  EXCHANGE_API_KEY: null,
   DISCORD_ORDERS_WEBHOOK_URL: (value) => isUrl(value, ['https:']),
   DISCORD_SNIPER_WEBHOOK_URL: (value) => isUrl(value, ['https:'])
 };
+
+const optionalChecks = {
+  CURATOR_API_URL: (value) => isUrl(value, ['https:'])
+};
+
+function isBlank(value) {
+  return value == null || (typeof value === 'string' && !value.trim());
+}
 
 function validateConfig(env) {
   const problems = [];
   for (const [key, check] of Object.entries(checks)) {
     const value = env[key];
-    if (value == null || (typeof value === 'string' && !value.trim())) {
+    if (isBlank(value)) {
       problems.push(`${key}: missing`);
     } else if (typeof value !== 'string' || (check && !check(value))) {
+      problems.push(`${key}: invalid`);
+    }
+  }
+  for (const [key, check] of Object.entries(optionalChecks)) {
+    const value = env[key];
+    if (!isBlank(value) && (typeof value !== 'string' || !check(value))) {
       problems.push(`${key}: invalid`);
     }
   }

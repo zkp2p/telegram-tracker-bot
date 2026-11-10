@@ -32,8 +32,9 @@ const {
   createTakeOnWebKeyboard,
   peerExplorerBuyUrl
 } = require('./src/alerts');
-const { resolveBlockTimestamp } = require('./src/chain');
+const { resolveBlockTimestamp, toHttpRpcUrl } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
+const { curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
 const {
   OFFICIAL_GROUP_CHAT_ID: ZKP2P_GROUP_ID,
   includeOfficialGroup,
@@ -51,8 +52,8 @@ const supabase = createClient(
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const sendTelegramNotification = createTelegramNotifier(bot);
 
-// Exchange rate API configuration
-const EXCHANGE_API_URL = `https://v6.exchangerate-api.com/v6/${process.env.EXCHANGE_API_KEY}/latest/USD`;
+// Market rates are read from Curator, never from the FX providers directly
+const CURATOR_API_URL = curatorApiUrl(process.env);
 
 const depositAmounts = new Map(); // Store deposit amounts temporarily
 const recentSniperAlerts = new Map(); // depositId -> timestamp, dedup alerts within 30s
@@ -65,7 +66,7 @@ const escrowV2DepositAmounts = new Map(); // depositId -> amount
 const escrowV3DepositAmounts = new Map(); // depositId -> amount
 
 // Oracle adapter support for V2/V3 escrow contracts
-const baseHttpProvider = new JsonRpcProvider('https://mainnet.base.org');
+const baseHttpProvider = new JsonRpcProvider(toHttpRpcUrl(process.env.BASE_RPC));
 const oracleAdapterAbi = [
   'function getRate(bytes calldata normalizedConfig) external view returns (bool valid, uint256 rate, uint256 updatedAt)'
 ];
@@ -622,7 +623,7 @@ let exchangeRatesCache = null;
 let lastRatesFetch = 0;
 const RATES_CACHE_DURATION = 60000; // 1 minute cache
 
-// ARS rate cache (CriptoYa API)
+// ARS rate cache (CriptoYa crypto-dollar quote, via Curator)
 let arsRateCache = null;
 let lastARSFetch = 0;
 const ARS_CACHE_DURATION = 60000; // 1 minute cache
@@ -636,25 +637,17 @@ async function getExchangeRates() {
   }
   
   try {
-    const response = await fetch(EXCHANGE_API_URL);
-    const data = await response.json();
-    
-    if (data.result === 'success') {
-      exchangeRatesCache = data.conversion_rates;
-      lastRatesFetch = now;
-      console.log('📊 Exchange rates updated');
-      return exchangeRatesCache;
-    } else {
-      console.error('❌ Exchange API error:', data);
-      return null;
-    }
+    exchangeRatesCache = await fetchUsdFxRates({ baseUrl: CURATOR_API_URL });
+    lastRatesFetch = now;
+    console.log('📊 Exchange rates updated');
+    return exchangeRatesCache;
   } catch (error) {
-    console.error('❌ Failed to fetch exchange rates:', error);
+    console.error('❌ Failed to fetch exchange rates:', error.message);
     return null;
   }
 }
 
-// Fetch ARS rate from CriptoYa API
+// Fetch the ARS rate (CriptoYa crypto-dollar USDC quote) from Curator
 async function getARSRate() {
   const now = Date.now();
   
@@ -664,22 +657,13 @@ async function getARSRate() {
   }
   
   try {
-    const response = await fetch('https://criptoya.com/api/dolar');
-    const data = await response.json();
-    
-    if (data && data.cripto && data.cripto.usdc && data.cripto.usdc.ask && data.cripto.usdc.bid) {
-      // Use USDC mid price (average of ask and bid)
-      const midPrice = (data.cripto.usdc.ask + data.cripto.usdc.bid) / 2;
-      arsRateCache = midPrice;
-      lastARSFetch = now;
-      console.log(`📊 ARS rate updated from CriptoYa: ${arsRateCache} ARS/USDC (mid: ask=${data.cripto.usdc.ask}, bid=${data.cripto.usdc.bid})`);
-      return arsRateCache;
-    } else {
-      console.error('❌ CriptoYa API error: missing cripto.usdc rate', data);
-      return null;
-    }
+    const { ask, bid, midPrice } = await fetchArsUsdcQuote({ baseUrl: CURATOR_API_URL });
+    arsRateCache = midPrice;
+    lastARSFetch = now;
+    console.log(`📊 ARS rate updated from CriptoYa: ${arsRateCache} ARS/USDC (mid: ask=${ask}, bid=${bid})`);
+    return arsRateCache;
   } catch (error) {
-    console.error('❌ Failed to fetch ARS rate from CriptoYa:', error);
+    console.error('❌ Failed to fetch ARS rate:', error.message);
     return null;
   }
 }

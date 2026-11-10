@@ -19,4 +19,9 @@ async function resolveBlockTimestamp(
   }
 }
 
-module.exports = { resolveBlockTimestamp };
+/** HTTP form of the configured RPC endpoint; the provider serves both transports on one URL. */
+function toHttpRpcUrl(rpcUrl) {
+  return rpcUrl.trim().replace(/^ws(s?):\/\//i, (_scheme, secure) => `http${secure.toLowerCase()}://`);
+}
+
+module.exports = { resolveBlockTimestamp, toHttpRpcUrl };

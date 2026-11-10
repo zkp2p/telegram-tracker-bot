@@ -34,7 +34,8 @@ const {
   formatPlatform,
   peerExplorerBuyUrl
 } = require('./src/alerts');
-const { resolveBlockTimestamp } = require('./src/chain');
+const { resolveBlockTimestamp, toHttpRpcUrl } = require('./src/chain');
+const { curatorApiUrl, fetchArsUsdcQuote, fetchUsdFxRates } = require('./src/market-rates');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
 const {
   OFFICIAL_GROUP_CHAT_ID,
@@ -50,7 +51,6 @@ describe('Startup configuration', () => {
     SUPABASE_URL: 'https://project.supabase.co',
     SUPABASE_ANON_KEY: 'supabase-key-marker',
     BASE_RPC: 'wss://rpc.example.test/v2/rpc-key-marker',
-    EXCHANGE_API_KEY: 'exchange-key-marker',
     DISCORD_ORDERS_WEBHOOK_URL: 'https://discord.com/api/webhooks/123/orders-marker',
     DISCORD_SNIPER_WEBHOOK_URL: 'https://discord.com/api/webhooks/456/sniper-marker'
   });
@@ -111,11 +111,27 @@ describe('Startup configuration', () => {
   it('reports every problem using only keys and reasons', () => {
     const { validateConfig } = require('./src/config');
     const env = { ...validEnv, TELEGRAM_BOT_TOKEN: 'short!', SUPABASE_URL: 'https://secret-marker:bad-port' };
-    delete env.EXCHANGE_API_KEY;
+    delete env.SUPABASE_ANON_KEY;
     const problems = validateConfig(env);
-    assert.deepEqual(problems, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'EXCHANGE_API_KEY: missing']);
+    assert.deepEqual(problems, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'SUPABASE_ANON_KEY: missing']);
     for (const value of Object.values(env)) assert.equal(problems.join('; ').includes(value), false);
     assert.equal(problems.join('; ').includes('secret-marker'), false);
+  });
+
+  it('treats the Curator URL as optional and requires HTTPS when it is set', () => {
+    const { validateConfig } = require('./src/config');
+    for (const CURATOR_API_URL of [undefined, '', ' \t ', 'https://curator.example.test', 'https://curator.example.test/']) {
+      assert.deepEqual(validateConfig({ ...validEnv, CURATOR_API_URL }), []);
+    }
+    for (const CURATOR_API_URL of ['curator-marker', 'http://curator-marker', 'wss://curator-marker', 'https://']) {
+      assert.deepEqual(validateConfig({ ...validEnv, CURATOR_API_URL }), ['CURATOR_API_URL: invalid']);
+    }
+  });
+
+  it('starts without an exchange-rate API key', () => {
+    const { validateConfig } = require('./src/config');
+    assert.equal('EXCHANGE_API_KEY' in validEnv, false);
+    assert.deepEqual(validateConfig(validEnv), []);
   });
 
   it('exits 1 with one safe stderr line before loading client dependencies', () => {
@@ -141,11 +157,10 @@ describe('Startup configuration', () => {
         DISCORD_ORDERS_WEBHOOK_URL: 'http://orders-marker',
         DISCORD_SNIPER_WEBHOOK_URL: 'sniper-marker'
       };
-      const missingExchangeEnv = { ...validEnv };
-      delete missingExchangeEnv.EXCHANGE_API_KEY;
+      const invalidCuratorEnv = { ...validEnv, CURATOR_API_URL: 'http://curator-marker' };
       for (const [env, problems] of [
         [{}, Object.keys(validEnv).map((key) => `${key}: missing`)],
-        [missingExchangeEnv, ['EXCHANGE_API_KEY: missing']],
+        [invalidCuratorEnv, ['CURATOR_API_URL: invalid']],
         [invalidEnv, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'BASE_RPC: invalid',
           'DISCORD_ORDERS_WEBHOOK_URL: invalid', 'DISCORD_SNIPER_WEBHOOK_URL: invalid']]
       ]) {
@@ -222,6 +237,100 @@ describe('Block timestamp resolution', () => {
     assert.equal(timestamp, 654321);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0][0], /block 99/);
+  });
+});
+
+describe('RPC endpoint', () => {
+  it('derives the HTTP endpoint from the configured WebSocket endpoint', () => {
+    assert.equal(toHttpRpcUrl('wss://rpc.example.test/v2/key?x=1'), 'https://rpc.example.test/v2/key?x=1');
+    assert.equal(toHttpRpcUrl('ws://127.0.0.1:8546/path'), 'http://127.0.0.1:8546/path');
+    assert.equal(toHttpRpcUrl(' WSS://rpc.example.test/v2/key '), 'https://rpc.example.test/v2/key');
+  });
+
+  it('keeps an HTTP endpoint unchanged', () => {
+    for (const url of ['https://rpc.example.test/v2/key', 'http://127.0.0.1:8545']) {
+      assert.equal(toHttpRpcUrl(url), url);
+    }
+  });
+
+  it('never falls back to a public RPC in the bot', () => {
+    const { readFileSync } = require('node:fs');
+    const source = readFileSync(require.resolve('./bot'), 'utf8');
+    assert.equal(/mainnet\.base\.org|exchangerate-api|criptoya\.com/.test(source), false);
+    assert.equal(source.includes('new JsonRpcProvider(toHttpRpcUrl(process.env.BASE_RPC))'), true);
+  });
+});
+
+describe('Market rates from Curator', () => {
+  const baseUrl = 'https://curator.example.test';
+  const reply = (body, { ok = true, status = 200 } = {}) => {
+    const requests = [];
+    const fetchImpl = async (url, options) => {
+      requests.push({ url, options });
+      return { ok, status, json: async () => body };
+    };
+    return { fetchImpl, requests };
+  };
+  const arsBody = (usdc, stale = false) => ({
+    success: true,
+    responseObject: {
+      observedAt: 1794345388,
+      usdcArs: { ripio: { ask: 1, bid: 2 } },
+      usdtArs: { ripio: { ask: 3, bid: 4 } },
+      dolar: { blue: { ask: 5, bid: 6 }, cripto: { usdt: { ask: 7, bid: 8 }, usdc } },
+      fromCache: true,
+      stale
+    }
+  });
+
+  it('defaults to the production Curator and strips trailing slashes', () => {
+    assert.equal(curatorApiUrl({}), 'https://api.zkp2p.xyz');
+    assert.equal(curatorApiUrl({ CURATOR_API_URL: '' }), 'https://api.zkp2p.xyz');
+    assert.equal(curatorApiUrl({ CURATOR_API_URL: ' https://curator.example.test// ' }), baseUrl);
+  });
+
+  it('reads the USD rate table from fx-rates with a request timeout', async () => {
+    const fiatPerUsd = { USD: 1, EUR: 0.9, INR: 83.25 };
+    const { fetchImpl, requests } = reply({ success: true, responseObject: { observedAt: 1, fiatPerUsd, fromCache: true } });
+    assert.deepEqual(await fetchUsdFxRates({ baseUrl, fetchImpl }), fiatPerUsd);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, 'https://curator.example.test/v2/market/fx-rates');
+    assert.equal(requests[0].options.signal instanceof AbortSignal, true);
+  });
+
+  it('rejects failed, unsuccessful and malformed fx-rates replies', async () => {
+    for (const { fetchImpl } of [
+      reply({ success: true, responseObject: { fiatPerUsd: {} } }, { ok: false, status: 502 }),
+      reply({ success: false, responseObject: null }),
+      reply({ success: true, responseObject: { observedAt: 1 } }),
+      reply(null)
+    ]) {
+      await assert.rejects(fetchUsdFxRates({ baseUrl, fetchImpl }));
+    }
+  });
+
+  it('uses the crypto-dollar USDC mid price from ars-rates', async () => {
+    const { fetchImpl, requests } = reply(arsBody({ ask: 1643.035, bid: 1690.503 }));
+    assert.deepEqual(await fetchArsUsdcQuote({ baseUrl, fetchImpl }), {
+      ask: 1643.035,
+      bid: 1690.503,
+      midPrice: (1643.035 + 1690.503) / 2
+    });
+    assert.equal(requests[0].url, 'https://curator.example.test/v2/market/ars-rates');
+  });
+
+  it('rejects a stale ars-rates snapshot instead of using an old price', async () => {
+    const { fetchImpl } = reply(arsBody({ ask: 1643.035, bid: 1690.503 }, true));
+    await assert.rejects(fetchArsUsdcQuote({ baseUrl, fetchImpl }), /stale/);
+  });
+
+  it('rejects ars-rates replies without a usable USDC quote', async () => {
+    for (const usdc of [undefined, {}, { ask: 1643.035 }, { ask: 0, bid: 1690.503 }, { ask: '1643', bid: null }]) {
+      const { fetchImpl } = reply(arsBody(usdc));
+      await assert.rejects(fetchArsUsdcQuote({ baseUrl, fetchImpl }));
+    }
+    const { fetchImpl } = reply({ success: true, responseObject: { stale: false } });
+    await assert.rejects(fetchArsUsdcQuote({ baseUrl, fetchImpl }));
   });
 });
 
