@@ -51,17 +51,22 @@ TELEGRAM_BOT_TOKEN=your_bot_token
 BASE_RPC=wss://your_base_websocket_rpc
 SUPABASE_URL=https://your_project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_key
-EXCHANGE_API_KEY=your_exchange_rate_api_key
 DISCORD_ORDERS_WEBHOOK_URL=https://discord.com/api/webhooks/your_orders_id/your_orders_token
 DISCORD_SNIPER_WEBHOOK_URL=https://discord.com/api/webhooks/your_sniper_id/your_sniper_token
 ```
 
-All seven values above are required; `NODE_ENV` is optional. Startup validates
+All six values above are required; `NODE_ENV` and `CURATOR_API_URL` are optional.
+Market rates (USD FX table and the ARS crypto-dollar quote) are read from Curator
+at `CURATOR_API_URL`, an HTTPS URL that defaults to `https://api.zkp2p.xyz`; the
+bot holds no exchange-rate API key. Startup validates
 configuration before creating clients and exits 1 with one stderr line naming bad
 keys as missing or invalid, never their values, so a bad config deploy fails the
 30-second health check and rolls back. Supabase and Discord URLs require HTTPS;
 `BASE_RPC` accepts `ws:`, `wss:`, `http:` or `https:` without fragments, but the
-endpoint must support WebSocket connections.
+endpoint must support WebSocket connections. It is the only RPC setting: event
+subscriptions use it as given, and block and oracle reads use its HTTP form
+(`wss:` becomes `https:`), so it must be a paid provider endpoint that serves
+both. The bot never calls a public RPC.
 
 ## 📊 Supported Events
 - `DepositReceived` - New sell orders created; batched with payment-method events for one complete alert

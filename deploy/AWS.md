@@ -47,7 +47,8 @@ Runtime JSON is a per-attempt config-cd snapshot under
 `/etc/peer-telegram-tracker/env/`, bind-mounted read-only at
 `/run/secrets/runtime.json`. It is not stored in this repo or embedded in the
 image. The runtime wrapper loads it and redacts configured credential values
-from the child process output.
+from the child process output. URL values are also redacted without their
+scheme, so the HTTPS form of the WebSocket `BASE_RPC` endpoint is covered.
 
 Before creating any clients, startup validates required configuration and URL/token
 shapes. Invalid configuration exits with code 1 and prints one stderr line naming
