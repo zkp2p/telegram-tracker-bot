@@ -55,6 +55,11 @@ DISCORD_ORDERS_WEBHOOK_URL=https://discord.com/api/webhooks/your_orders_id/your_
 DISCORD_SNIPER_WEBHOOK_URL=https://discord.com/api/webhooks/your_sniper_id/your_sniper_token
 ```
 
+In production these values live in Infisical project `telegram-tracker`
+(`11d609d9-755e-4ce1-96aa-e66a8bc8eb05`), env `prod`; config CD deploys them (see
+[Deploy](#deploy)). For local runs, put them in a git-ignored `.env`, which
+`bot.js` loads with `dotenv`.
+
 All six values above are required; `NODE_ENV` and `CURATOR_API_URL` are optional.
 Market rates (USD FX table and the ARS crypto-dollar quote) are read from Curator
 at `CURATOR_API_URL`, an HTTPS URL that defaults to `https://api.zkp2p.xyz`; the
@@ -87,6 +92,24 @@ npm install
 npm run check
 npm test
 ```
+
+## Deploy
+
+Production runs on AWS EC2 through the Peer Deploy platform; details are in
+[`deploy/AWS.md`](deploy/AWS.md).
+
+- **Branch:** push or fast-forward `releases/prod`, or dispatch **Deploy** on it
+  to redeploy. `.github/workflows/deploy.yml` builds `deploy/Dockerfile` and
+  deploys it over SSM with peer-deploy's stop-then-start `restart` strategy.
+  Deploys never happen by hand on the host.
+- **CI gate:** a successful `ci.yml` run for the commit is required.
+- **Config:** Infisical project `telegram-tracker`, env `prod`, is the source of
+  truth. Config CD snapshots it to Secrets Manager `peer/telegram-tracker/prod`
+  and runs `Deploy releases/prod (reconcile)` automatically.
+- **Rollback:** move `releases/prod` to the last known-good commit; revert
+  config in Infisical. Check for alerts missed while the bot was stopped.
+- **Logs:** deploy output in CloudWatch `/peer/deploy/telegram-tracker`;
+  application output via `docker logs peer-telegram-tracker` in an SSM session.
 
 ## 🤝 Contributing
 This is an **open source** project! Contributions welcome:
