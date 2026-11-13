@@ -16,9 +16,7 @@ const checks = {
   SUPABASE_URL: (value) => isUrl(value, ['https:']),
   SUPABASE_ANON_KEY: null,
   // ethers uses ws, which maps http(s) to ws(s) and rejects URL fragments.
-  BASE_RPC: (value) => isUrl(value, ['ws:', 'wss:', 'http:', 'https:'], false),
-  DISCORD_ORDERS_WEBHOOK_URL: (value) => isUrl(value, ['https:']),
-  DISCORD_SNIPER_WEBHOOK_URL: (value) => isUrl(value, ['https:'])
+  BASE_RPC: (value) => isUrl(value, ['ws:', 'wss:', 'http:', 'https:'], false)
 };
 
 const optionalChecks = {
