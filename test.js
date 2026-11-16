@@ -50,15 +50,29 @@ describe('Startup configuration', () => {
     TELEGRAM_BOT_TOKEN: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
     SUPABASE_URL: 'https://project.supabase.co',
     SUPABASE_ANON_KEY: 'supabase-key-marker',
-    BASE_RPC: 'wss://rpc.example.test/v2/rpc-key-marker',
-    DISCORD_ORDERS_WEBHOOK_URL: 'https://discord.com/api/webhooks/123/orders-marker',
-    DISCORD_SNIPER_WEBHOOK_URL: 'https://discord.com/api/webhooks/456/sniper-marker'
+    BASE_RPC: 'wss://rpc.example.test/v2/rpc-key-marker'
   });
 
   it('accepts valid configuration without mutating it; NODE_ENV is optional', () => {
     const { validateConfig } = require('./src/config');
     assert.deepEqual(validateConfig(validEnv), []);
     assert.deepEqual(validateConfig({ ...validEnv, NODE_ENV: 'production' }), []);
+  });
+
+  it('ignores Discord variables with valid, malformed or blank values', () => {
+    const { validateConfig } = require('./src/config');
+    const variables = {
+      DISCORD_ORDERS_WEBHOOK_URL: 'https://example.test/webhooks/orders-marker',
+      DISCORD_SNIPER_WEBHOOK_URL: 'https://example.test/webhooks/sniper-marker',
+      DISCORD_ORDERS_THREAD_ID: '123456789',
+      DISCORD_SNIPER_THREAD_ID: '987654321'
+    };
+    assert.deepEqual(validateConfig({ ...validEnv, ...variables }), []);
+    for (const value of ['malformed-marker', 'http://host-marker', '', ' \t\r\n ']) {
+      const env = { ...validEnv };
+      for (const key of Object.keys(variables)) env[key] = value;
+      assert.deepEqual(validateConfig(env), []);
+    }
   });
 
   for (const key of Object.keys(validEnv)) {
@@ -73,7 +87,7 @@ describe('Startup configuration', () => {
     });
   }
 
-  for (const key of ['SUPABASE_URL', 'BASE_RPC', 'DISCORD_ORDERS_WEBHOOK_URL', 'DISCORD_SNIPER_WEBHOOK_URL']) {
+  for (const key of ['SUPABASE_URL', 'BASE_RPC']) {
     it(`rejects malformed URLs and unsupported schemes for ${key}`, () => {
       const { validateConfig } = require('./src/config');
       for (const value of ['url-marker', '/relative-marker', 'https://', 'https:host-marker',
@@ -153,16 +167,13 @@ describe('Startup configuration', () => {
       const invalidEnv = { ...validEnv,
         TELEGRAM_BOT_TOKEN: 'short!',
         SUPABASE_URL: 'https://supabase-marker:bad-port',
-        BASE_RPC: 'wss://rpc.example.test/#rpc-marker',
-        DISCORD_ORDERS_WEBHOOK_URL: 'http://orders-marker',
-        DISCORD_SNIPER_WEBHOOK_URL: 'sniper-marker'
+        BASE_RPC: 'wss://rpc.example.test/#rpc-marker'
       };
       const invalidCuratorEnv = { ...validEnv, CURATOR_API_URL: 'http://curator-marker' };
       for (const [env, problems] of [
         [{}, Object.keys(validEnv).map((key) => `${key}: missing`)],
         [invalidCuratorEnv, ['CURATOR_API_URL: invalid']],
-        [invalidEnv, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'BASE_RPC: invalid',
-          'DISCORD_ORDERS_WEBHOOK_URL: invalid', 'DISCORD_SNIPER_WEBHOOK_URL: invalid']]
+        [invalidEnv, ['TELEGRAM_BOT_TOKEN: invalid', 'SUPABASE_URL: invalid', 'BASE_RPC: invalid']]
       ]) {
         const result = spawnSync(process.execPath, ['-e', script], { cwd, env, encoding: 'utf8', timeout: 5000 });
         assert.ifError(result.error);

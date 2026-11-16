@@ -22,15 +22,13 @@ const {
   orchestratorV4Abi
 } = require('./src/contracts');
 const {
-  PEER_DEPOSITS_URL,
   buildBuyOrderCreatedMessage,
   buildBuyOrderStatusMessage,
   buildSellOrderCreatedMessage,
   buildSniperMessage,
   createPeerExplorerBuyKeyboard,
   createPeerExplorerSellKeyboard,
-  createTakeOnWebKeyboard,
-  peerExplorerBuyUrl
+  createTakeOnWebKeyboard
 } = require('./src/alerts');
 const { resolveBlockTimestamp, toHttpRpcUrl } = require('./src/chain');
 const { createDepositCreationCollector } = require('./src/deposit-creations');
@@ -490,60 +488,6 @@ class DatabaseManager {
   }
 }
 
-async function postToDiscord({
-  webhookUrl,
-  content,
-  components = null,
-  threadId = null,
-  username = 'ZKP2P Alerts',
-  avatar_url = undefined
-}) {
-  if (!webhookUrl) return; // silently skip if not configured
-
-  const url = threadId ? `${webhookUrl}?thread_id=${threadId}` : webhookUrl;
-
-  const body = { content, username, avatar_url };
-  if (components) body.components = components;
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-
-  // Simple rate-limit handling
-  if (res.status === 429) {
-    const j = await res.json().catch(() => ({}));
-    const retryMs = Math.ceil((j.retry_after || 1) * 1000);
-    await new Promise(r => setTimeout(r, retryMs));
-    return postToDiscord({ webhookUrl, content, components, threadId, username, avatar_url });
-  }
-
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    console.error('Discord webhook error:', res.status, txt);
-  }
-}
-
-function linkButton(label, url) {
-  return [
-    {
-      type: 1, // ActionRow
-      components: [
-        { type: 2, style: 5, label, url } // ButtonStyle.Link
-      ]
-    }
-  ];
-}
-
-function toDiscordMarkdown(msg) {
-  // Turn *bold* (Telegram) into **bold** (Discord)
-  // Non-greedy so it won't over-capture
-  return msg.replace(/\*(.*?)\*/g, '**$1**');
-}
-
-
-
 const db = new DatabaseManager();
 
 const ZKP2P_TOPIC_ID = 5385;
@@ -764,13 +708,6 @@ async function sendFulfilledNotification(rawIntent, eventTimestamp) {
     eventTimestamp
   });
 
-  await postToDiscord({
-    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
-  });
-
 
   for (const chatId of interestedUsers) {
     await db.updateDepositStatus(chatId, depositId, 'fulfilled', intentHash);
@@ -806,13 +743,6 @@ async function sendPrunedNotification(rawIntent, eventTimestamp) {
     currencyCode: storedDetails ? getFiatCode(storedDetails.fiatCurrency) : null,
     signalTimestamp: storedDetails?.timestamp,
     eventTimestamp
-  });
-
-  await postToDiscord({
-    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
 
@@ -867,13 +797,6 @@ async function sendOrchestratorFulfilledNotification(rawIntent, eventTimestamp) 
     eventTimestamp
   });
 
-  await postToDiscord({
-    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
-  });
-
   for (const chatId of interestedUsers) {
     await db.updateDepositStatus(chatId, depositId, 'fulfilled', intentHash);
     await db.logEventNotification(chatId, depositId, 'fulfilled');
@@ -918,13 +841,6 @@ async function sendOrchestratorPrunedNotification(rawIntent, eventTimestamp) {
     currencyCode: getFiatCode(storedDetails.fiatCurrency),
     signalTimestamp: storedDetails.timestamp,
     eventTimestamp
-  });
-
-  await postToDiscord({
-    webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-    threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-    content: toDiscordMarkdown(message),
-    components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
   });
 
   for (const chatId of interestedUsers) {
@@ -1121,13 +1037,6 @@ const sendOptions = {
 if (chatId === ZKP2P_GROUP_ID) {
   sendOptions.message_thread_id = ZKP2P_SNIPER_TOPIC_ID;
 }
-
-await postToDiscord({
-  webhookUrl: process.env.DISCORD_SNIPER_WEBHOOK_URL,
-  threadId: process.env.DISCORD_SNIPER_THREAD_ID || null,
-  content: toDiscordMarkdown(message),
-  components: linkButton('Take on web', PEER_DEPOSITS_URL)
-});
 
 
 await sendTelegramNotification(chatId, message, sendOptions, 'snipe alert');
@@ -1519,13 +1428,6 @@ const handleContractEvent = async (log) => {
         conversionRate,
         currencyCode: fiatCode,
         timestamp
-      });
-
-      await postToDiscord({
-        webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-        threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-        content: toDiscordMarkdown(message),
-        components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
       });
 
 
@@ -2078,13 +1980,6 @@ function createOrchestratorEventHandler(sourceLabel, eventInterface) {
           conversionRate,
           currencyCode: fiatCode,
           timestamp
-        });
-
-        await postToDiscord({
-          webhookUrl: process.env.DISCORD_ORDERS_WEBHOOK_URL,
-          threadId: process.env.DISCORD_ORDERS_THREAD_ID || null,
-          content: toDiscordMarkdown(message),
-          components: linkButton('View on Peer', peerExplorerBuyUrl(intentHash))
         });
 
         await Promise.all(interestedUsers.map(async (chatId) => {
