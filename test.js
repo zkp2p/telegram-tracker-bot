@@ -753,15 +753,38 @@ describe('Human-readable alerts', () => {
       '',
       '*Platform:* PayPal',
       '*Pay:* $95.00 USD 🇺🇸',
-      '*Receive:* 100.00 USDC (= ~$100.00 USD 🇺🇸)',
-      '*Profit:* ~$5.00 USD',
+      '*Receive:* 97.05 USDC after the 2.95% fee (= ~$97.05 USD 🇺🇸)',
+      '*Profit:* ~$2.05 USD',
       '*Found:* Aug 6, 2026 at 6:42 PM UTC',
       '',
       '[Download the mobile app](https://mobile.zkp2p.xyz/onboard) to receive faster notifications and snipe on the go.'
     ].join('\n'));
+    assert.match(parity, /^⚖️ \*1:1 rate\*\n/);
     assert.match(parity, /\*Platform:\* Cash App/);
     assert.match(parity, /\*Pay:\* \$100\.00 USD 🇺🇸/);
+    assert.match(parity, /\*Receive:\* 97\.05 USDC after the 2\.95% fee \(= ~\$97\.05 USD 🇺🇸\)/);
     assert.equal(parity.includes('*Profit:*'), false);
+  });
+
+  it('charges 4.95% only on split-fee platforms priced below $0.95 per USDC', () => {
+    const snipe = (platform, conversionRate) => buildSniperMessage({
+      amount: 100000000n,
+      conversionRate,
+      platform,
+      currencyCode: 'USD',
+      marketRate: 1,
+      isOneToOne: false,
+      timestamp
+    });
+
+    for (const platform of ['cashapp', 'venmo', 'xmoney', 'zelle']) {
+      const below = snipe(platform, 940000000000000000n);
+      assert.match(below, /\*Pay:\* \$94\.00 USD 🇺🇸/);
+      assert.match(below, /\*Receive:\* 95\.05 USDC after the 4\.95% fee \(= ~\$95\.05 USD 🇺🇸\)/);
+      assert.match(below, /\*Profit:\* ~\$1\.05 USD/);
+      assert.match(snipe(platform, 950000000000000000n), /\*Receive:\* 97\.05 USDC after the 2\.95% fee/);
+    }
+    assert.match(snipe('paypal', 940000000000000000n), /\*Receive:\* 97\.05 USDC after the 2\.95% fee/);
   });
 
   it('renders Monobank UAH sniper alerts from the deployed payment method', () => {
@@ -779,20 +802,30 @@ describe('Human-readable alerts', () => {
     });
     assert.match(message, /\*Platform:\* Monobank/);
     assert.match(message, /\*Pay:\* ₴4,000\.00 UAH 🇺🇦/);
-    assert.match(message, /\*Receive:\* 100\.00 USDC \(= ~₴4,200\.00 UAH 🇺🇦\)/);
-    assert.match(message, /\*Profit:\* ~\$4\.76 USD/);
+    assert.match(message, /\*Receive:\* 97\.05 USDC after the 2\.95% fee \(= ~₴4,076\.10 UAH 🇺🇦\)/);
+    assert.match(message, /\*Profit:\* ~\$1\.81 USD/);
   });
 
   it('only shows snipe profit when its USD value exceeds one dollar', () => {
+    // 9,705 USDC after the fee for $9,704.
     const exactlyOneDollar = buildSniperMessage({
-      amount: 100000000n,
-      conversionRate: 990000000000000000n,
+      amount: 10000000000n,
+      conversionRate: 970400000000000000n,
       marketRate: 1,
       currencyCode: 'USD',
       isOneToOne: false,
       timestamp
     });
-    const fiveDollarEuroProfit = buildSniperMessage({
+    // $3.00 before the fee, $0.05 after it.
+    const feeEatsProfit = buildSniperMessage({
+      amount: 100000000n,
+      conversionRate: 970000000000000000n,
+      marketRate: 1,
+      currencyCode: 'USD',
+      isOneToOne: false,
+      timestamp
+    });
+    const twoDollarEuroProfit = buildSniperMessage({
       amount: 100000000n,
       conversionRate: 855000000000000000n,
       marketRate: 0.9,
@@ -802,9 +835,11 @@ describe('Human-readable alerts', () => {
     });
 
     assert.equal(exactlyOneDollar.includes('*Profit:*'), false);
-    assert.match(fiveDollarEuroProfit, /\*Pay:\* €85\.50 EUR 🇪🇺/);
-    assert.match(fiveDollarEuroProfit, /\*Receive:\* 100\.00 USDC \(= ~€90\.00 EUR 🇪🇺\)/);
-    assert.match(fiveDollarEuroProfit, /\*Profit:\* ~\$5\.00 USD/);
+    assert.match(feeEatsProfit, /\*Receive:\* 97\.05 USDC after the 2\.95% fee \(= ~\$97\.05 USD 🇺🇸\)/);
+    assert.equal(feeEatsProfit.includes('*Profit:*'), false);
+    assert.match(twoDollarEuroProfit, /\*Pay:\* €85\.50 EUR 🇪🇺/);
+    assert.match(twoDollarEuroProfit, /\*Receive:\* 97\.05 USDC after the 2\.95% fee \(= ~€87\.35 EUR 🇪🇺\)/);
+    assert.match(twoDollarEuroProfit, /\*Profit:\* ~\$2\.05 USD/);
   });
 
   it('keeps lifecycle updates concise and human-readable', () => {

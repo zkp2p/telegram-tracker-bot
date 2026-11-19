@@ -41,7 +41,7 @@ The bot monitors exchange rates and alerts you when new deposits offer better ra
 - Compares deposit rates vs live market rates
 - Alerts on opportunities 0.2% or better
 - Supports currency and platform-specific targeting
-- Shows exact percentage discount and profit potential
+- Shows the USDC you receive and the profit after the taker service fee
 
 ## 🛠 Setup
 
