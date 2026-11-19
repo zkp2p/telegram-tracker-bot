@@ -2,6 +2,19 @@ const PEER_APP_BASE_URL = 'https://app.peer.xyz';
 const PEER_DEPOSITS_URL = `${PEER_APP_BASE_URL}/deposits`;
 const MOBILE_ONBOARD_URL = 'https://mobile.zkp2p.xyz/onboard';
 
+// Taker service fee deducted from the USDC a buyer receives. Mirrors Curator's
+// GlobalConfig rows `service_fee` and `service_fee_split:<platform>` (zkp2p/curator
+// src/common/utils/serviceFee.ts); change it here when those rows change.
+const TAKER_SERVICE_FEE = Object.freeze({
+  bps: 295,
+  // These platforms charge belowBps on deposits priced below thresholdRate (fiat per USDC, 1e18).
+  split: Object.freeze({
+    platforms: Object.freeze(['cashapp', 'venmo', 'xmoney', 'zelle']),
+    thresholdRate: 950000000000000000n,
+    belowBps: 495
+  })
+});
+
 const CURRENCY_EMOJIS = Object.freeze({
   AED: '🇦🇪',
   ARS: '🇦🇷',
@@ -263,13 +276,18 @@ function buildSniperMessage({
   isOneToOne,
   timestamp
 }) {
-  const headline = isOneToOne ? '⚖️ *1:1 opportunity*' : '🎯 *Snipe opportunity*';
-  const usdcValue = Number(amount) / 1e6;
-  const depositRate = Number(conversionRate) / 1e18;
+  // A 1:1 rate still costs the buyer the fee, so the headline names the rate, not a 1:1 trade.
+  const headline = isOneToOne ? '⚖️ *1:1 rate*' : '🎯 *Snipe opportunity*';
+  const { bps, split } = TAKER_SERVICE_FEE;
+  const feeBps = split.platforms.includes(platform) && BigInt(conversionRate) < split.thresholdRate
+    ? split.belowBps
+    : bps;
+  const receiveAmount = Number(amount) * (10_000 - feeBps) / 10_000;
+  const payValue = (Number(amount) / 1e6) * (Number(conversionRate) / 1e18);
   const numericMarketRate = Number(marketRate);
-  const marketValue = usdcValue * numericMarketRate;
+  const marketValue = (receiveAmount / 1e6) * numericMarketRate;
   const profitUsd = numericMarketRate > 0
-    ? (marketValue - (usdcValue * depositRate)) / numericMarketRate
+    ? (marketValue - payValue) / numericMarketRate
     : 0;
   const currencyEmoji = getCurrencyEmoji(currencyCode);
 
@@ -278,7 +296,7 @@ function buildSniperMessage({
     '',
     `*Platform:* ${formatPlatform(platform)}`,
     `*Pay:* ${formatFiatAmount(amount, conversionRate, currencyCode)} ${currencyEmoji}`,
-    `*Receive:* ${formatUSDCAmount(amount)} (= ~${formatFiatValue(marketValue, currencyCode)} ${currencyEmoji})`
+    `*Receive:* ${formatUSDCAmount(receiveAmount)} after the ${feeBps / 100}% fee (= ~${formatFiatValue(marketValue, currencyCode)} ${currencyEmoji})`
   ];
 
   if (profitUsd > 1) {
