@@ -3,10 +3,12 @@ const PEER_DEPOSITS_URL = `${PEER_APP_BASE_URL}/deposits`;
 const MOBILE_ONBOARD_URL = 'https://mobile.zkp2p.xyz/onboard';
 
 // Taker service fee deducted from the USDC a buyer receives. Mirrors Curator's
-// GlobalConfig rows `service_fee` and `service_fee_split:<platform>` (zkp2p/curator
-// src/common/utils/serviceFee.ts); change it here when those rows change.
+// GlobalConfig rows `service_fee`, `service_fee:<platform>` and `service_fee_split:<platform>`
+// (zkp2p/curator src/common/utils/serviceFee.ts); change it here when those rows change.
 const TAKER_SERVICE_FEE = Object.freeze({
   bps: 295,
+  // These platforms charge their own rate instead of bps.
+  platforms: Object.freeze({ alipay: 95 }),
   // These platforms charge belowBps on deposits priced below thresholdRate (fiat per USDC, 1e18).
   split: Object.freeze({
     platforms: Object.freeze(['cashapp', 'venmo', 'xmoney', 'zelle']),
@@ -278,10 +280,10 @@ function buildSniperMessage({
 }) {
   // A 1:1 rate still costs the buyer the fee, so the headline names the rate, not a 1:1 trade.
   const headline = isOneToOne ? '⚖️ *1:1 rate*' : '🎯 *Snipe opportunity*';
-  const { bps, split } = TAKER_SERVICE_FEE;
+  const { bps, platforms, split } = TAKER_SERVICE_FEE;
   const feeBps = split.platforms.includes(platform) && BigInt(conversionRate) < split.thresholdRate
     ? split.belowBps
-    : bps;
+    : platforms[platform] ?? bps;
   const receiveAmount = Number(amount) * (10_000 - feeBps) / 10_000;
   const payValue = (Number(amount) / 1e6) * (Number(conversionRate) / 1e18);
   const numericMarketRate = Number(marketRate);

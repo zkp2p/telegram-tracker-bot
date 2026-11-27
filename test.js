@@ -787,6 +787,21 @@ describe('Human-readable alerts', () => {
     assert.match(snipe('paypal', 940000000000000000n), /\*Receive:\* 97\.05 USDC after the 2\.95% fee/);
   });
 
+  it('charges Alipay its 0.95% platform rate at any price', () => {
+    for (const conversionRate of [940000000000000000n, 7200000000000000000n]) {
+      const message = buildSniperMessage({
+        amount: 100000000n,
+        conversionRate,
+        platform: 'alipay',
+        currencyCode: 'CNY',
+        marketRate: 7.2,
+        isOneToOne: false,
+        timestamp
+      });
+      assert.match(message, /\*Receive:\* 99\.05 USDC after the 0\.95% fee/);
+    }
+  });
+
   it('renders Monobank UAH sniper alerts from the deployed payment method', () => {
     const platform = getPlatformName('0x1d966dbd6aeb8674d7c05174bd0ded7b56a798672bfb862ef20bbe8c2bbfce18');
     assert.equal(platform, 'monobank');
